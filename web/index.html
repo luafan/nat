@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <link rel="stylesheet" href="jquery.mobile-1.4.5.min.css">
+    <script src="jquery.min.js"></script>
+    <script src="jquery.mobile-1.4.5.min.js"></script>
+</head>
+
+<script>
+    var key_mapping = {};
+    var key_index = 0;
+
+    function refresh() {
+        $.ajax({
+            url: "/list",
+            dataType: "json",
+
+            success: function(response) {
+                var keymap = {
+                    "title": $("#title")
+                };
+                for (var i = 0; i < response.list.length; i++) {
+                    var item = response.list[i]
+                    var keyid = key_mapping[item.key]
+                    if (keyid == undefined) {
+                        keyid = "item" + key_index++;
+                        key_mapping[item.key] = keyid;
+                    }
+                    keymap[keyid] = item
+                }
+
+                var remainmap = {};
+
+                $("#list").find("li").each(function(index, value) {
+                    if (keymap[value.id]) {
+                        remainmap[value.id] = value;
+                    } else {
+                        value.remove();
+                    }
+                });
+
+                $("#title").html("Memory: " + response.memory +
+                    " Send: " + response.udp_send_total +
+                    " Receive: " + response.udp_receive_total +
+                    " ReSend: " + response.udp_resend_total +
+                    " Top: " + response.top +
+                    " Reg: " + response.reg_count +
+                    " BindMap: " + response.bind_map_count +
+                    " PeerMap: " + response.peer_map_count +
+                    " AllowedMap: " + response.allowed_map_count +
+                    "<span class='ui-li-count'>" + response.list.length + "</span>");
+
+                for (var i = 0; i < response.list.length; i++) {
+                    var item = response.list[i];
+                    var keyid = key_mapping[item.key]
+                    if (!remainmap[keyid]) {
+                        var li = "<li id='" + key_mapping[item.key] + "'>" +
+                            "<h3 id='title'></h3>" +
+                            "<p id='desc'></p>" +
+                            "<p></p>" +
+                            "<p id='righttop' class='ui-li-aside'></p>" +
+                            "</li>";
+                        $("#list").append(li);
+                    }
+
+                    var li = $("#" + keyid)
+                    var title = item.key + "(" + (item.clientkey ? item.clientkey : "N/A") + ")";
+                    var title_li = li.find("#title")
+                    if (title != title_li.text()) {
+                        title_li.text(title);
+                    }
+                    var desc = "incoming: " + item.incoming.length +
+                        " output_chain: " + item.output_chain_count +
+                        " output_wait: " + item.output_wait_count +
+                        " output_wait_ack: " + item.output_wait_ack_count +
+                        " client: " + item.ppclient_connection_count +
+                        " service: " + item.ppservice_connection_count +
+                        " output_wait_index_map: " + item.output_wait_index_map_count +
+                        " ppkeepalive_map: " + item.ppkeepalive_map_count +
+                        " ppclient_connection: " + item.ppclient_connection_count +
+                        " ppservice_connection: " + item.ppservice_connection_count +
+                        "";
+                    var desc_li = li.find("#desc");
+                    if (desc != desc_li.text()) {
+                        desc_li.text(desc);
+                    }
+
+                    li.find("#righttop").text(item.last_keepalive);
+                }
+
+                $("#list").listview("refresh");
+            }
+        });
+    }
+
+    setInterval(refresh, 2000);
+    $(document).ready(function(e) {
+        console.log("ready");
+        refresh();
+    });
+</script>
+
+<body>
+    <div data-role="page" id="pageone">
+        <ul id="list" data-role="listview" data-inset="true">
+            <li id="title" data-role="list-divider"></li>
+        </ul>
+    </div>
+
+</body>
+
+</html>
