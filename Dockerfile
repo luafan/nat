@@ -1,4 +1,4 @@
-FROM samchang/webase
+FROM luafan/webase
 
 ENV REMOTE_HOST 127.0.0.1
 ENV REMOTE_PORT 10000
