@@ -372,10 +372,6 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
       until obj.incoming_count == 0 or not found
     end
 
-    if obj.incoming_count > 0 then
-      print("obj.incoming_count", obj.incoming_count, "obj.incoming_index", obj.incoming_index)
-    end
-
     if #(obj.input_queue) > 0 then
       if obj.outgoing_count < config.outgoing_count_max then
         local data = table.remove(obj.input_queue, 1)
