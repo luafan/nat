@@ -35,7 +35,7 @@ local clientkey = string.format("%s-%s", config.name, utils.random_string(utils.
 
 local function _sync_port()
   if sync_port_running then
-    coroutine.resume(sync_port_running)
+    assert(coroutine.resume(sync_port_running))
   end
 end
 
@@ -127,46 +127,58 @@ end
 
 function command_map.ppconnect(apt, host, port, msg)
   local peer = shared.peer_map[msg.clientkey]
-  local obj
+  local connection_map = peer.ppservice_connection_map
 
   if config.debug then
     print(host, port, cjson.encode(msg))
   end
 
-  obj = {
-    connkey = msg.connkey,
+  local connkey = msg.connkey
+
+  local obj = {
+    connkey = connkey,
     host = host,
     port = port,
-    forward_index = nil,
-    auto_index = 0,
+    incoming_cache = {},
+    incoming_index = nil,
+    incoming_count = 0,
+    outgoing_cache = {},
+    outgoing_count = 0,
+    auto_index = 1,
     input_queue = {},
-    conn = tcpd.connect{
-      host = msg.host,
-      port = msg.port,
-      onconnected = function()
-        if config.debug then
-          print("onconnected")
-        end
-        obj.connected = true
-        _send(apt, {type = "ppconnected", connkey = msg.connkey})
-      end,
-      onread = function(buf)
-        table.insert(obj.input_queue, buf)
-        _sync_port()
-      end,
-      ondisconnected = function(msgstr)
-        obj.connected = nil
-        obj.conn = nil
-        if config.debug then
-          print("remote disconnected", msgstr)
-        end
-        obj.need_send_disconnect = true
-        -- _send(apt, {type = "ppdisconnectedmaster", connkey = msg.connkey})
-      end
-    }
   }
 
-  peer.ppservice_connection_map[msg.connkey] = obj
+  connection_map[connkey] = obj
+
+  obj.conn = tcpd.connect{
+    host = msg.host,
+    port = msg.port,
+    onconnected = function()
+      if config.debug then
+        print("onconnected")
+      end
+
+      local obj = connection_map[connkey]
+
+      obj.connected = true
+      _send(apt, {type = "ppconnected", connkey = connkey})
+    end,
+    onread = function(buf)
+      local obj = connection_map[connkey]
+      table.insert(obj.input_queue, buf)
+      _sync_port()
+    end,
+    ondisconnected = function(msgstr)
+      local obj = connection_map[connkey]
+      obj.connected = nil
+      obj.conn = nil
+      if config.debug then
+        print("remote disconnected", msgstr)
+      end
+      obj.need_send_disconnect = true
+      -- _send(apt, {type = "ppdisconnectedmaster", connkey = msg.connkey})
+    end
+  }
 end
 
 function command_map.ppconnected(apt, host, port, msg)
@@ -218,9 +230,11 @@ function command_map.ppdata_req(apt, host, port, msg)
   local peer = _get_peer(apt)
   local obj = peer.ppservice_connection_map[msg.connkey]
   if obj then
-    obj.conn:send(msg.data)
+    obj.incoming_cache[msg.index] = msg.data
+    obj.incoming_count = obj.incoming_count + 1
   end
 
+  _sync_port()
   -- msg.data = nil
   -- print(os.date("%X"), host, port, cjson.encode(msg))
 end
@@ -229,9 +243,11 @@ function command_map.ppdata_resp(apt, host, port, msg)
   local peer = _get_peer(apt)
   local obj = peer.ppclient_connection_map[msg.connkey]
   if obj and obj.connected then
-    obj.apt:send(msg.data)
+    obj.incoming_cache[msg.index] = msg.data
+    obj.incoming_count = obj.incoming_count + 1
   end
 
+  _sync_port()
   -- local len = #(msg.data)
   -- msg.data = nil
   -- print(os.date("%X"), host, port, cjson.encode(msg), len)
@@ -336,64 +352,65 @@ local function keepalive_peers(bindserv)
   end
 end
 
-local function sync_port_buffers(bindserv)
-  while not bindserv.stop do
-    local count = 0
-    for ckey,peer in pairs(shared.peer_map) do
-      for connkey,obj in pairs(peer.ppservice_connection_map) do
-        if #(obj.input_queue) > 0 then
-          if not obj.forward_index then
-            local data = table.remove(obj.input_queue, 1)
-            -- obj.input_queue = {}
-            local auto_index = obj.auto_index + 1
-            obj.auto_index = auto_index
-            obj.forward_index = _send(peer.apt, {
-                type = "ppdata_resp",
-                connkey = connkey,
-                data = data,
-                index = auto_index
-              })
-            if config.debug then
-              print("forwarding to client", obj.forward_index, auto_index)
-            end
-            peer.apt.index_conn_map[obj.forward_index] = obj
-            count = count + 1
+local function _flush_connection_map(peer, conn_key, map_key, flush_type, disconnect_type)
+  for connkey,obj in pairs(peer[map_key]) do
+    if obj.incoming_count > 0 then
+      local found
+      repeat
+        found = false
+        for k,v in pairs(obj.incoming_cache) do
+          if not obj.incoming_index
+            or k == (obj.incoming_index < config.auto_index_max and obj.incoming_index + 1 or 1) then
+            obj.incoming_index = k
+            obj.incoming_cache[k] = nil
+            obj.incoming_count = obj.incoming_count - 1
+            obj[conn_key]:send(v)
+            found = true
+            break
           end
-        elseif obj.need_send_disconnect then
-          obj.need_send_disconnect = nil
-          peer.ppservice_connection_map[connkey] = nil
-          _send(peer.apt, {type = "ppdisconnectedmaster", connkey = connkey})
         end
-      end
+      until obj.incoming_count == 0 or not found
     end
 
-    for k,peer in pairs(shared.peer_map) do
-      for connkey,obj in pairs(peer.ppclient_connection_map) do
-        -- print(obj, obj.connected, obj.forward_index, #(obj.input_queue))
-        if #(obj.input_queue) > 0 then
-          if not obj.forward_index then
-            local data = table.remove(obj.input_queue, 1)
-            -- obj.input_queue = {}
-            local auto_index = obj.auto_index + 1
-            obj.auto_index = auto_index
-            obj.forward_index = _send(peer.apt, {
-                type = "ppdata_req",
-                connkey = connkey,
-                data = data,
-                index = auto_index
-              })
-            if config.debug then
-              print("forwarding to server", obj.forward_index, auto_index)
-            end
-            peer.apt.index_conn_map[obj.forward_index] = obj
-            count = count + 1
-          end
-        elseif obj.need_send_disconnect then
-          obj.need_send_disconnect = nil
-          peer.ppclient_connection_map[connkey] = nil
-          _send(peer.apt, {type = "ppdisconnectedclient", connkey = connkey})
+    if obj.incoming_count > 0 then
+      print("obj.incoming_count", obj.incoming_count, "obj.incoming_index", obj.incoming_index)
+    end
+
+    if #(obj.input_queue) > 0 then
+      if obj.outgoing_count < config.outgoing_count_max then
+        local data = table.remove(obj.input_queue, 1)
+        -- local data = table.concat(obj.input_queue)
+        -- obj.input_queue = {}
+        local auto_index = obj.auto_index
+        obj.auto_index = auto_index < config.auto_index_max and auto_index + 1 or 1
+        local forward_index = _send(peer.apt, {
+            type = flush_type,
+            connkey = connkey,
+            data = data,
+            index = auto_index
+          })
+
+        obj.outgoing_cache[forward_index] = true
+        obj.outgoing_count = obj.outgoing_count + 1
+
+        if config.debug then
+          print(map_key, "forward", forward_index, auto_index)
         end
+        peer.apt.index_conn_map[forward_index] = obj
       end
+    elseif obj.need_send_disconnect then
+      obj.need_send_disconnect = nil
+      peer[map_key][connkey] = nil
+      _send(peer.apt, {type = disconnect_type, connkey = connkey})
+    end
+  end
+end
+
+local function sync_port_buffers(bindserv)
+  while not bindserv.stop do
+    for ckey,peer in pairs(shared.peer_map) do
+      _flush_connection_map(peer, "conn", "ppservice_connection_map", "ppdata_resp", "ppdisconnectedmaster")
+      _flush_connection_map(peer, "apt", "ppclient_connection_map", "ppdata_req", "ppdisconnectedclient")
     end
 
     sync_port_running = coroutine.running()
@@ -459,7 +476,9 @@ local function bind_apt(apt)
     local obj = apt.index_conn_map[index]
 
     if obj then
-      obj.forward_index = nil
+      obj.outgoing_count = obj.outgoing_count - 1
+      obj.outgoing_cache[index] = nil
+      apt.index_conn_map[index] = nil
       _sync_port()
     elseif apt.ppkeepalive_map[index] then
       apt.ppkeepalive_map[index] = nil

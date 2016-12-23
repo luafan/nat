@@ -14,7 +14,7 @@ local pairs = pairs
 local assert = assert
 local collectgarbage = collectgarbage
 
-local connkey_index = 0
+local connkey_index = 1
 
 local function onPost(req, resp)
   local params = json.decode(req.body)
@@ -44,34 +44,42 @@ local function onPost(req, resp)
     serv = tcpd.bind{
       port = port,
       onaccept = function(apt)
-        local d = {
+        local connkey = connkey_index
+        connkey_index = connkey_index + 1
+
+        local obj = {
+          connkey = connkey,
           input_queue = {},
+          incoming_cache = {},
+          incoming_index = nil,
+          incoming_count = 0,
+          outgoing_cache = {},
+          outgoing_count = 0,
           apt = apt,
           bind_port = port,
           peer = peer,
           host = peer.host,
           port = peer.port,
-          forward_index = nil,
-          auto_index = 0,
+          auto_index = 1,
           connected = true,
         }
 
-        connkey_index = connkey_index + 1
-        d.connkey = connkey_index
-        peer.ppclient_connection_map[d.connkey] = d
+        local connection_map = peer.ppclient_connection_map
+        connection_map[connkey] = obj
 
         local nat = service.get("nat")
 
         nat.send(peer.apt, {
             type = "ppconnect",
-            connkey = d.connkey,
+            connkey = connkey,
             host = params.remote_host,
             port = params.remote_port
           })
 
         apt:bind{
           onread = function(buf)
-            table.insert(d.input_queue, buf)
+            local obj = connection_map[connkey]
+            table.insert(obj.input_queue, buf)
             nat.sync_port()
           end,
           ondisconnected = function(msg)
@@ -79,10 +87,10 @@ local function onPost(req, resp)
               print("client disconnected", msg)
             end
 
-            d.connected = nil
-            d.apt = nil
-            d.need_send_disconnect = true
-            d = nil
+            local obj = connection_map[connkey]
+            obj.connected = nil
+            obj.apt = nil
+            obj.need_send_disconnect = true
           end
         }
       end

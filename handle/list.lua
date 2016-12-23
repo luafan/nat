@@ -44,9 +44,22 @@ end
 local function onGet(req, resp)
   resp:addheader("Content-Type", "application/json; charset=UTF-8")
 
+  local blanks = {}
+  local start = 0
+  local regtable = debug.getregistry()
+  while start do
+    if regtable[start] then
+      blanks[start] = true
+      start = regtable[start]
+    else
+      break
+    end
+  end
   local reg_count = 0
   for k,v in pairs(debug.getregistry()) do
-    reg_count = reg_count + 1
+    if not blanks[k] then
+      reg_count = reg_count + 1
+    end
   end
 
   local map = {

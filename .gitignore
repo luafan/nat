@@ -14,3 +14,4 @@ mapping.lua
 handle/snapshot.lua
 web/images
 web/jquery*
+config.d

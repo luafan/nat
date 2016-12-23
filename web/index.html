@@ -2,6 +2,7 @@
 <html>
 
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="jquery.mobile-1.4.5.min.css">
     <script src="jquery.min.js"></script>
     <script src="jquery.mobile-1.4.5.min.js"></script>
@@ -97,12 +98,18 @@
     setInterval(refresh, 2000);
     $(document).ready(function(e) {
         console.log("ready");
+        $("#purge").click(function(){
+          $.ajax({
+              url: "/purge_cache",
+          });
+        })
         refresh();
     });
 </script>
 
 <body>
     <div data-role="page" id="pageone">
+        <a id="purge" data-role="button" data-inline="true">Purge</a>
         <ul id="list" data-role="listview" data-inset="true">
             <li id="title" data-role="list-divider"></li>
         </ul>
