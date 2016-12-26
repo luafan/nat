@@ -2,7 +2,8 @@
 <html>
 
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <!-- <meta name="viewport" content="width=device-width, initial-scale=1"> -->
     <link rel="stylesheet" href="jquery.mobile-1.4.5.min.css">
     <script src="jquery.min.js"></script>
     <script src="jquery.mobile-1.4.5.min.js"></script>
@@ -11,6 +12,33 @@
 <script>
     var key_mapping = {};
     var key_index = 0;
+
+    var data_map = {};
+    var selected_id = null;
+
+    function fill_dialog(item){
+      $("#detail_title").text(item.display_title);
+      $("#last_keepalive").text("keepalive: " + item.last_keepalive);
+      $("#incoming").text("incoming: " + item.incoming.length);
+      $("#output_chain").text("output_chain: " + item.output_chain_count);
+      $("#output_wait").text("output_wait: " + item.output_wait_count);
+      $("#output_wait_ack").text("output_wait_ack: " + item.output_wait_ack_count);
+      $("#output_wait_index_map").text("output_wait_index_map: " + item.output_wait_index_map_count);
+      $("#ppkeepalive_map").text("ppkeepalive_map: " + item.ppkeepalive_map_count);
+      $("#ppclient_connection").text("client: " + item.ppclient_connection_count);
+      $("#ppservice_connection").text("service: " + item.ppservice_connection_count);
+    }
+
+    $(function() {
+        $("#list").on("click", "li", function() {
+            var id = $(this).attr('id');
+            var item = data_map[id];
+            selected_id = id;
+
+            $("#detailbtn").click();
+            fill_dialog(item);
+        });
+    });
 
     function refresh() {
         $.ajax({
@@ -52,42 +80,31 @@
                     " AllowedMap: " + response.allowed_map_count +
                     "<span class='ui-li-count'>" + response.list.length + "</span>");
 
+                data_map = {};
                 for (var i = 0; i < response.list.length; i++) {
                     var item = response.list[i];
                     var keyid = key_mapping[item.key]
+
+                    data_map[keyid] = item;
+
                     if (!remainmap[keyid]) {
-                        var li = "<li id='" + key_mapping[item.key] + "'>" +
+                        var li = "<li id='" + keyid + "'>" +
                             "<h3 id='title'></h3>" +
-                            "<p id='desc'></p>" +
-                            "<p></p>" +
-                            "<p id='righttop' class='ui-li-aside'></p>" +
                             "</li>";
                         $("#list").append(li);
                     }
 
                     var li = $("#" + keyid)
                     var title = item.key + "(" + (item.clientkey ? item.clientkey : "N/A") + ")";
+                    item.display_title = title;
                     var title_li = li.find("#title")
                     if (title != title_li.text()) {
                         title_li.text(title);
                     }
-                    var desc = "incoming: " + item.incoming.length +
-                        " output_chain: " + item.output_chain_count +
-                        " output_wait: " + item.output_wait_count +
-                        " output_wait_ack: " + item.output_wait_ack_count +
-                        " client: " + item.ppclient_connection_count +
-                        " service: " + item.ppservice_connection_count +
-                        " output_wait_index_map: " + item.output_wait_index_map_count +
-                        " ppkeepalive_map: " + item.ppkeepalive_map_count +
-                        " ppclient_connection: " + item.ppclient_connection_count +
-                        " ppservice_connection: " + item.ppservice_connection_count +
-                        "";
-                    var desc_li = li.find("#desc");
-                    if (desc != desc_li.text()) {
-                        desc_li.text(desc);
-                    }
 
-                    li.find("#righttop").text(item.last_keepalive);
+                    if (selected_id == keyid) {
+                      fill_dialog(item);
+                    }
                 }
 
                 $("#list").listview("refresh");
@@ -98,10 +115,10 @@
     setInterval(refresh, 2000);
     $(document).ready(function(e) {
         console.log("ready");
-        $("#purge").click(function(){
-          $.ajax({
-              url: "/purge_cache",
-          });
+        $("#purge").click(function() {
+            $.ajax({
+                url: "/purge_cache",
+            });
         })
         refresh();
     });
@@ -110,11 +127,27 @@
 <body>
     <div data-role="page" id="pageone">
         <a id="purge" data-role="button" data-inline="true">Purge</a>
+        <a href="#detail" id="detailbtn" name="detailbtn" class="ui-btn ui-shadow ui-corner-all ui-btn-inline ui-btn-mini">Overlay</a>
         <ul id="list" data-role="listview" data-inset="true">
             <li id="title" data-role="list-divider"></li>
         </ul>
-    </div>
 
+        <div data-role="panel" style="width:480px" id="detail"
+          data-position="right" data-display="overlay" data-theme="b">
+            <h1>Detail</h1>
+            <h2 id="detail_title" name="detail_title">title</h2>
+            <label name="last_keepalive" id="last_keepalive"></label>
+            <label name="incoming" id="incoming"></label>
+            <label name="output_chain" id="output_chain"></label>
+            <label name="output_wait" id="output_wait"></label>
+            <label name="output_wait_ack" id="output_wait_ack"></label>
+            <label name="output_wait_index_map" id="output_wait_index_map"></label>
+            <label name="ppkeepalive_map" id="ppkeepalive_map"></label>
+            <label name="ppclient_connection" id="ppclient_connection"></label>
+            <label name="ppservice_connection" id="ppservice_connection"></label>
+            <a data-role="button" data-rel="back" data-theme="b">完成</a>
+        </div>
+    </div>
 </body>
 
 </html>

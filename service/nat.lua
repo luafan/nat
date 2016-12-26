@@ -179,6 +179,8 @@ function command_map.ppconnect(apt, host, port, msg)
       -- _send(apt, {type = "ppdisconnectedmaster", connkey = msg.connkey})
     end
   }
+
+  config.weaktable[string.format("ppconnect_%d", connkey)] = obj.conn
 end
 
 function command_map.ppconnected(apt, host, port, msg)
@@ -331,11 +333,7 @@ local function keepalive_peers(bindserv)
 
     for port,t in pairs(shared.bind_map) do
       if not live_peers[t.peer] then
-        if t.serv then
-          t.serv:close()
-          t.serv = nil
-        end
-        shared.bind_map[port] = nil
+        t:unbind()
       end
     end
 
@@ -360,7 +358,7 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
         found = false
         for k,v in pairs(obj.incoming_cache) do
           if not obj.incoming_index
-            or k == (obj.incoming_index < config.auto_index_max and obj.incoming_index + 1 or 1) then
+          or k == (obj.incoming_index < config.auto_index_max and obj.incoming_index + 1 or 1) then
             obj.incoming_index = k
             obj.incoming_cache[k] = nil
             obj.incoming_count = obj.incoming_count - 1
@@ -435,6 +433,8 @@ local function bind_apt(apt)
   apt.ppkeepalive_map = {}
   apt.index_conn_map = {}
   setmetatable(apt.index_conn_map, {__mode = "v"})
+
+  config.weaktable[string.format("bind_apt_%s:%d", apt.host, apt.port)] = apt
 
   apt.last_keepalive = utils.gettime()
 
@@ -547,16 +547,136 @@ function onStop()
   status = "stopped"
 end
 
+local bind_service_mt = {}
+bind_service_mt.__index = bind_service_mt
+
+local connkey_index = 1
+
+function bind_service_mt:bind()
+  if self.serv then
+    return
+  end
+
+  local port = self.port
+  local peer = self.peer
+
+  self.serv = tcpd.bind{
+    port = port,
+    onaccept = function(apt)
+      local connkey = connkey_index
+      connkey_index = connkey_index + 1
+
+      local obj = {
+        connkey = connkey,
+        input_queue = {},
+        incoming_cache = {},
+        incoming_index = nil,
+        incoming_count = 0,
+        outgoing_cache = {},
+        outgoing_count = 0,
+        apt = apt,
+        bind_port = port,
+        peer = peer,
+        host = peer.host,
+        port = peer.port,
+        auto_index = 1,
+        connected = true,
+      }
+
+      local connection_map = peer.ppclient_connection_map
+      connection_map[connkey] = obj
+
+      _send(peer.apt, {
+          type = "ppconnect",
+          connkey = connkey,
+          host = self.remote_host,
+          port = self.remote_port
+        })
+
+      apt:bind{
+        onread = function(buf)
+          local obj = connection_map[connkey]
+          table.insert(obj.input_queue, buf)
+          _sync_port()
+        end,
+        ondisconnected = function(msg)
+          if config.debug then
+            print("client disconnected", msg)
+          end
+
+          local obj = connection_map[connkey]
+          obj.connected = nil
+          obj.apt = nil
+          obj.need_send_disconnect = true
+        end
+      }
+
+      config.weaktable[string.format("conn_apt_%d", connkey)] = apt
+    end
+  }
+
+  if self.serv then
+    config.weaktable[string.format("bind_%d", port)] = self.serv
+    shared.bind_map[port] = self
+    return true, "submitted."
+  else
+    return false, string.format("can't not bind to %d.", port)
+  end
+end
+
+function bind_service_mt:unbind()
+  if self.serv then
+    shared.bind_map[self.port] = nil
+    self.serv:close()
+    self.serv = nil
+
+    return true, "unbinded."
+  else
+    return false, "invaild."
+  end
+end
+
+function unbind(params)
+  local port = tonumber(params.port)
+  if shared.bind_map[port] then
+    return shared.bind_map[port]:unbind()
+  else
+    return false, "not bind."
+  end
+end
+
+function bind(params)
+  local port = tonumber(params.port)
+  if shared.bind_map[port] then
+    return false, "bind already."
+  end
+
+  local peer = nil
+  for k,v in pairs(shared.peer_map) do
+    if k:find(params.clientkey) == 1 then
+      peer = v
+      break
+    end
+  end
+  if not peer then
+    return false, "NAT not completed."
+  end
+
+  local t
+  t = {
+    port = port,
+    peer = peer,
+    remote_host = params.remote_host,
+    remote_port = params.remote_port,
+  }
+
+  setmetatable(t, bind_service_mt)
+
+  return t:bind()
+end
+
 function getStatus()
   return string.format("%s", status)
-end
-
-function send(...)
-  return _send(...)
-end
-
-function sync_port()
-  _sync_port()
 end
 
 function get_peer(...)
