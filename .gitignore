@@ -15,3 +15,4 @@ handle/snapshot.lua
 web/images
 web/jquery*
 config.d
+service/test.lua

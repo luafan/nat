@@ -126,14 +126,18 @@ function command_map.list(apt, host, port, msg)
 end
 
 function command_map.ppconnect(apt, host, port, msg)
-  local peer = shared.peer_map[msg.clientkey]
-  local connection_map = peer.ppservice_connection_map
-
   if config.debug then
     print(host, port, cjson.encode(msg))
   end
 
   local connkey = msg.connkey
+  local clientkey = msg.clientkey
+
+  local connection_map = shared.peer_map[clientkey].ppservice_connection_map
+
+  if connection_map[connkey] then
+    return
+  end
 
   local obj = {
     connkey = connkey,
@@ -158,18 +162,18 @@ function command_map.ppconnect(apt, host, port, msg)
         print("onconnected")
       end
 
-      local obj = connection_map[connkey]
+      local obj = shared.peer_map[clientkey].ppservice_connection_map[connkey]
 
       obj.connected = true
       _send(apt, {type = "ppconnected", connkey = connkey})
     end,
     onread = function(buf)
-      local obj = connection_map[connkey]
+      local obj = shared.peer_map[clientkey].ppservice_connection_map[connkey]
       table.insert(obj.input_queue, buf)
       _sync_port()
     end,
     ondisconnected = function(msgstr)
-      local obj = connection_map[connkey]
+      local obj = shared.peer_map[clientkey].ppservice_connection_map[connkey]
       obj.connected = nil
       obj.conn = nil
       if config.debug then
