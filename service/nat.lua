@@ -172,6 +172,17 @@ function command_map.ppconnect(apt, host, port, msg)
       table.insert(obj.input_queue, buf)
       _sync_port()
     end,
+    onsendready = function()
+      local connection_map = shared.peer_map[clientkey].ppservice_connection_map
+      local obj = connection_map[connkey]
+      if obj.need_close_service then
+        connection_map[connkey] = nil
+        if obj.conn then
+          obj.conn:close()
+          obj.conn = nil
+        end
+      end
+    end,
     ondisconnected = function(msgstr)
       local obj = shared.peer_map[clientkey].ppservice_connection_map[connkey]
       obj.connected = nil
@@ -204,14 +215,10 @@ function command_map.ppdisconnectedmaster(apt, host, port, msg)
   end
   local peer = _get_peer(apt)
   local obj = peer.ppclient_connection_map[msg.connkey]
-  peer.ppclient_connection_map[msg.connkey] = nil
   -- clean up client apt.
   if obj then
     obj.connected = nil
-    if obj.apt then
-      obj.apt:close()
-      obj.apt = nil
-    end
+    obj.need_close_client = true
   end
 end
 
@@ -224,11 +231,7 @@ function command_map.ppdisconnectedclient(apt, host, port, msg)
   -- clean up server conn.
   if obj then
     obj.connected = nil
-    peer.ppservice_connection_map[msg.connkey] = nil
-    if obj.conn then
-      obj.conn:close()
-      obj.conn = nil
-    end
+    obj.need_close_service = true
   end
 end
 
@@ -396,7 +399,7 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
         end
         peer.apt.index_conn_map[forward_index] = obj
       end
-    elseif obj.need_send_disconnect then
+    elseif obj.need_send_disconnect and obj.outgoing_count == 0 then
       obj.need_send_disconnect = nil
       peer[map_key][connkey] = nil
       _send(peer.apt, {type = disconnect_type, connkey = connkey})
@@ -603,6 +606,16 @@ function bind_service_mt:bind()
           table.insert(obj.input_queue, buf)
           _sync_port()
         end,
+        onsendready = function()
+          local obj = connection_map[connkey]
+          if obj.need_close_client then
+            connection_map[connkey] = nil
+            if obj.apt then
+              obj.apt:close()
+              obj.apt = nil
+            end
+          end
+        end,
         ondisconnected = function(msg)
           if config.debug then
             print("client disconnected", msg)
@@ -616,6 +629,7 @@ function bind_service_mt:bind()
       }
 
       config.weaktable[string.format("conn_apt_%d", connkey)] = apt
+      config.weaktable[string.format("conn_obj_%d", connkey)] = obj
     end
   }
 
