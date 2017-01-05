@@ -55,14 +55,6 @@ local function _send(apt, msg)
   return apt:send(objectbuf.encode(msg, sym))
 end
 
-local function send_any(apt, msg, ...)
-  msg.clientkey = clientkey
-  if config.debug then
-    print("send", cjson.encode(msg))
-  end
-  return apt:send(objectbuf.encode(msg, sym), ...)
-end
-
 function command_map.list(apt, host, port, msg)
   if not shared.internal_port then
     shared.internal_port = shared.bindserv.serv:getPort()
@@ -97,21 +89,21 @@ function command_map.list(apt, host, port, msg)
       local output_index = _send(peer.apt, {type = "ppkeepalive"})
       peer.apt.ppkeepalive_map[output_index] = true
     else
-      local apt = shared.bindserv.getapt(v.host, v.port)
-      local output_index = send_any(apt, {type = "ppkeepalive"}, v.host, v.port)
+      local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+      local output_index = _send(apt, {type = "ppkeepalive"})
       apt.ppkeepalive_map[output_index] = true
 
       if v.internal_host and v.internal_port then
-        local apt = shared.bindserv.getapt(v.internal_host, v.internal_port)
-        local output_index = send_any(apt, {type = "ppkeepalive"}, v.internal_host, v.internal_port)
+        local apt = shared.bindserv.getapt(v.internal_host, v.internal_port, nil, string.format("%s:%d", v.internal_host, v.internal_port))
+        local output_index = _send(apt, {type = "ppkeepalive"})
         apt.ppkeepalive_map[output_index] = true
       end
 
       if v.data then
         for i,v in ipairs(v.data) do
           if v.host and v.port then
-            local apt = shared.bindserv.getapt(v.host, v.port)
-            local output_index = send_any(apt, {type = "ppkeepalive"}, v.host, v.port)
+            local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+            local output_index = _send(apt, {type = "ppkeepalive"})
             apt.ppkeepalive_map[output_index] = true
           end
         end
@@ -291,13 +283,13 @@ local function list_peers(bindserv)
       }
     end
 
-    send_any(shared.remote_serv, {
+    _send(shared.remote_serv, {
         type = "list",
         internal_host = shared.internal_host,
         internal_port = shared.internal_port,
         internal_netmask = shared.internal_netmask,
         data = data,
-      }, config.remote_host, config.remote_port)
+      })
     -- send{type = "keepalive"}
     fan.sleep(3)
   end
@@ -346,7 +338,7 @@ local function keepalive_peers(bindserv)
 
     for key,apt in pairs(bindserv.clientmap) do
       if utils.gettime() - apt.last_keepalive > 20 and apt ~= shared.remote_serv then
-        apt:cleanup(apt.host, apt.port)
+        apt:cleanup()
         if config.debug then
           print(key, "keepalive timeout.")
         end
@@ -379,9 +371,9 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
 
     if #(obj.input_queue) > 0 then
       if obj.outgoing_count < config.outgoing_count_max then
-        local data = table.remove(obj.input_queue, 1)
-        -- local data = table.concat(obj.input_queue)
-        -- obj.input_queue = {}
+        -- local data = table.remove(obj.input_queue, 1)
+        local data = table.concat(obj.input_queue)
+        obj.input_queue = {}
         local auto_index = obj.auto_index
         obj.auto_index = auto_index < config.auto_index_max and auto_index + 1 or 1
         local forward_index = _send(peer.apt, {
@@ -445,7 +437,10 @@ local function bind_apt(apt)
 
   apt.last_keepalive = utils.gettime()
 
-  apt.onread = function(body, host, port)
+  local host = apt.host
+  local port = apt.port
+
+  apt.onread = function(body)
     local msg = objectbuf.decode(body, sym)
     if not msg then
       print("decode failed", host, port, #(body))
@@ -488,26 +483,22 @@ local function bind_apt(apt)
     end
   end
 
-  apt.ontimeout = function(package, host, port)
-    if host and port then
-      local alive = shared.allowed_map[host] and shared.allowed_map[host][port]
-      if not alive then
+  apt.ontimeout = function(package)
+    local alive = shared.allowed_map[host] and shared.allowed_map[host][port]
+    if not alive then
+      if config.debug then
+        print("timeout, drop", #(package), host, port)
+      end
+      return false
+    else
+      local output_index = string.unpack("<I2", package)
+      if apt.ppkeepalive_map[output_index] then
+        apt.ppkeepalive_map[output_index] = nil
         if config.debug then
-          print("timeout, drop", #(package), host, port)
+          print("drop ppkeepalive")
         end
         return false
-      else
-        local output_index = string.unpack("<I2", package)
-        if apt.ppkeepalive_map[output_index] then
-          apt.ppkeepalive_map[output_index] = nil
-          if config.debug then
-            print("drop ppkeepalive")
-          end
-          return false
-        end
       end
-    else
-      return true
     end
 
     return true
@@ -531,7 +522,9 @@ function onStart()
   end
 
   shared.bindserv = connector.bind("udp://0.0.0.0:0")
-  shared.remote_serv = shared.bindserv.getapt(config.remote_host, config.remote_port)
+  shared.remote_serv = shared.bindserv.getapt(config.remote_host, config.remote_port,
+   nil, string.format("%s:%d", config.remote_host, config.remote_port))
+
   bind_apt(shared.remote_serv)
 
   shared.bindserv.onaccept = function(apt)

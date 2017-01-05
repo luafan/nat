@@ -18,8 +18,8 @@ local connkey_index = 0
 
 local function onPost(req, resp)
   local params = json.decode(req.body)
-  if params.debug ~= nil then
-    config.debug = params.debug
+  for k,v in pairs(params) do
+    config[k] = v
   end
   return resp:reply(200, "OK")
 end

@@ -91,7 +91,6 @@ local function onGet(req, resp)
       output_wait_ack_count = count_table_size(apt._output_wait_ack),
       output_wait_index_map_count = count_table_size(apt._output_wait_package_parts_map),
       output_ack_package_count = count_table_size(apt._output_ack_package),
-      output_ack_dest_count = count_table_size(apt._output_ack_dest),
       incoming_map_count = count_table_size(apt._incoming_map, 2),
       output_chain_count = count_chain_size(apt._output_chain),
       ppclient_connection_count = peer and count_table_size(peer.ppclient_connection_map) or "N/A",
@@ -102,27 +101,24 @@ local function onGet(req, resp)
 
     table.insert(map.list, item)
 
-    local incoming = apt._incoming_map[key]
-    if incoming then
-      for output_index,incoming_object in pairs(incoming) do
-        if incoming_object.done then
-          table.insert(item.incoming, {
-              index = output_index,
-              total = incoming_object.count,
-            })
-        else
-          local count = 0
-          for idx,body in pairs(incoming_object.items) do
-            if body then
-              count = count + 1
-            end
+    for output_index,incoming_object in pairs(apt._incoming_map) do
+      if incoming_object.done then
+        table.insert(item.incoming, {
+            index = output_index,
+            total = incoming_object.count,
+          })
+      else
+        local count = 0
+        for idx,body in pairs(incoming_object.items) do
+          if body then
+            count = count + 1
           end
-          table.insert(item.incoming, {
-              index = output_index,
-              count = count,
-              total = incoming_object.count,
-            })
         end
+        table.insert(item.incoming, {
+            index = output_index,
+            count = count,
+            total = incoming_object.count,
+          })
       end
     end
 
