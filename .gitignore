@@ -16,3 +16,7 @@ web/images
 web/jquery*
 config.d
 service/test.lua
+ProFi.lua
+luacov.report.out
+luacov.stats.out
+MyProfilingReport.txt

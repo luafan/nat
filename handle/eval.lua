@@ -25,6 +25,8 @@ local function onPost(req, resp)
     local st,msg = pcall(f, resp)
     if not st then
       return resp:reply(500, "Error", msg)
+    else
+      return resp:reply(200, "OK")
     end
   end
 end

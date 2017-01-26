@@ -196,7 +196,9 @@ function command_map.ppconnected(apt, host, port, msg)
   end
   local peer = _get_peer(apt)
   local obj = peer.ppclient_connection_map[msg.connkey]
-  obj.connected = true
+  if obj then
+    obj.connected = true
+  end
 
   _sync_port()
 end
@@ -491,7 +493,7 @@ local function bind_apt(apt)
       end
       return false
     else
-      local output_index = string.unpack("<I2", package)
+      local output_index = string.unpack("<I4", package)
       if apt.ppkeepalive_map[output_index] then
         apt.ppkeepalive_map[output_index] = nil
         if config.debug then
@@ -523,7 +525,7 @@ function onStart()
 
   shared.bindserv = connector.bind("udp://0.0.0.0:0")
   shared.remote_serv = shared.bindserv.getapt(config.remote_host, config.remote_port,
-   nil, string.format("%s:%d", config.remote_host, config.remote_port))
+    nil, string.format("%s:%d", config.remote_host, config.remote_port))
 
   bind_apt(shared.remote_serv)
 
