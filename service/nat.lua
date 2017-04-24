@@ -27,6 +27,10 @@ shared.peer_map = {}
 shared.bind_map = {}
 shared.allowed_map = {}
 
+local MAX_OUTGOING_INPUT_COUNT = config.max_outgoing_input_count or 10
+
+local MAX_INPUT_QUEUE_SIZE = config.max_input_queue_size or 1000
+
 local sync_port_running = nil
 
 local command_map = {}
@@ -162,6 +166,11 @@ function command_map.ppconnect(apt, host, port, msg)
     onread = function(buf)
       local obj = shared.peer_map[clientkey].ppservice_connection_map[connkey]
       table.insert(obj.input_queue, buf)
+
+      if #(obj.input_queue) > MAX_INPUT_QUEUE_SIZE then
+        obj.conn:pause_read()
+        obj.pause_read = obj.conn
+      end
       _sync_port()
     end,
     onsendready = function()
@@ -310,13 +319,17 @@ local function keepalive_peers(bindserv)
     local live_peers = {}
     for k,peer in pairs(shared.peer_map) do
       if utils.gettime() - peer.apt.last_keepalive > config.peer_timeout then
-        peer.apt:cleanup()
+        if peer.apt then
+          peer.apt:cleanup()
+        end
         if config.debug then
           print(k, "keepalive timeout.")
         end
         for connkey,obj in pairs(peer.ppclient_connection_map) do
-          obj.apt:close()
-          obj.apt = nil
+          if obj.apt then
+            obj.apt:close()
+            obj.apt = nil
+          end
         end
 
         shared.peer_map[k] = nil
@@ -363,7 +376,9 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
             obj.incoming_index = k
             obj.incoming_cache[k] = nil
             obj.incoming_count = obj.incoming_count - 1
-            obj[conn_key]:send(v)
+            if obj[conn_key] then
+              obj[conn_key]:send(v)
+            end
             found = true
             break
           end
@@ -374,8 +389,21 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
     if #(obj.input_queue) > 0 then
       if obj.outgoing_count < config.outgoing_count_max then
         -- local data = table.remove(obj.input_queue, 1)
-        local data = table.concat(obj.input_queue)
-        obj.input_queue = {}
+
+        -- local data = table.concat(obj.input_queue)
+        -- obj.input_queue = {}
+
+        local data
+        if #(obj.input_queue) > MAX_OUTGOING_INPUT_COUNT then
+          local tmp = {}
+          data = table.concat(obj.input_queue, nil, 1, MAX_OUTGOING_INPUT_COUNT)
+          table.move(obj.input_queue, MAX_OUTGOING_INPUT_COUNT + 1, #(obj.input_queue), 1, tmp)
+          obj.input_queue = tmp
+        else
+          data = table.concat(obj.input_queue)
+          obj.input_queue = {}
+        end
+
         local auto_index = obj.auto_index
         obj.auto_index = auto_index < config.auto_index_max and auto_index + 1 or 1
         local forward_index = _send(peer.apt, {
@@ -445,7 +473,8 @@ local function bind_apt(apt)
   apt.onread = function(body)
     local msg = objectbuf.decode(body, sym)
     if not msg then
-      print("decode failed", host, port, #(body))
+      print("decode failed.", host, port, #(body))
+      return
     end
 
     local t = shared.allowed_map[host]
@@ -479,6 +508,12 @@ local function bind_apt(apt)
       obj.outgoing_count = obj.outgoing_count - 1
       obj.outgoing_cache[index] = nil
       apt.index_conn_map[index] = nil
+
+      if obj.pause_read and #(obj.input_queue) < MAX_INPUT_QUEUE_SIZE/2 then
+        obj.pause_read:resume_read()
+        obj.pause_read = nil
+      end
+
       _sync_port()
     elseif apt.ppkeepalive_map[index] then
       apt.ppkeepalive_map[index] = nil
@@ -599,6 +634,12 @@ function bind_service_mt:bind()
         onread = function(buf)
           local obj = connection_map[connkey]
           table.insert(obj.input_queue, buf)
+
+          if #(obj.input_queue) > MAX_INPUT_QUEUE_SIZE then
+            obj.apt:pause_read()
+            obj.pause_read = obj.apt
+          end
+
           _sync_port()
         end,
         onsendready = function()
