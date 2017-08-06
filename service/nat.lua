@@ -150,21 +150,21 @@ function command_map.ppconnect(apt, host, port, msg)
 
   connection_map[connkey] = obj
 
+  local weak_obj = utils.weakify_object(obj)
+
   obj.conn = tcpd.connect{
     host = msg.host,
     port = msg.port,
     onconnected = function()
+      local obj = weak_obj
       if config.debug then
         print("onconnected")
       end
-
-      local obj = shared.peer_map[clientkey].ppservice_connection_map[connkey]
-
       obj.connected = true
       _send(apt, {type = "ppconnected", connkey = connkey})
     end,
     onread = function(buf)
-      local obj = shared.peer_map[clientkey].ppservice_connection_map[connkey]
+      local obj = weak_obj
       table.insert(obj.input_queue, buf)
 
       if #(obj.input_queue) > MAX_INPUT_QUEUE_SIZE then
@@ -174,18 +174,14 @@ function command_map.ppconnect(apt, host, port, msg)
       _sync_port()
     end,
     onsendready = function()
-      local connection_map = shared.peer_map[clientkey].ppservice_connection_map
-      local obj = connection_map[connkey]
+      local obj = weak_obj
+      obj.sending = false
       if obj.need_close_service then
-        connection_map[connkey] = nil
-        if obj.conn then
-          obj.conn:close()
-          obj.conn = nil
-        end
+        pp_close_service(clientkey, connkey)
       end
     end,
     ondisconnected = function(msgstr)
-      local obj = shared.peer_map[clientkey].ppservice_connection_map[connkey]
+      local obj = weak_obj
       obj.connected = nil
       obj.conn = nil
       if config.debug then
@@ -212,6 +208,14 @@ function command_map.ppconnected(apt, host, port, msg)
   _sync_port()
 end
 
+local function pp_close_client(obj, connkey)
+  obj.peer.ppclient_connection_map[connkey] = nil
+  if obj.apt then
+    obj.apt:close()
+    obj.apt = nil
+  end
+end
+
 function command_map.ppdisconnectedmaster(apt, host, port, msg)
   if config.debug then
     print(host, port, cjson.encode(msg))
@@ -222,6 +226,20 @@ function command_map.ppdisconnectedmaster(apt, host, port, msg)
   if obj then
     obj.connected = nil
     obj.need_close_client = true
+    if not obj.sending then
+      pp_close_client(obj, msg.connkey)
+    end
+  end
+end
+
+local function pp_close_service(clientkey, connkey)
+  local connection_map = shared.peer_map[clientkey].ppservice_connection_map
+  local obj = connection_map[connkey]
+  connection_map[connkey] = nil
+
+  if obj and obj.conn then
+    obj.conn:close()
+    obj.conn = nil
   end
 end
 
@@ -235,6 +253,9 @@ function command_map.ppdisconnectedclient(apt, host, port, msg)
   if obj then
     obj.connected = nil
     obj.need_close_service = true
+    if not obj.sending then
+      pp_close_service(msg.clientkey, msg.connkey)
+    end
   end
 end
 
@@ -323,7 +344,7 @@ local function keepalive_peers(bindserv)
           peer.apt:cleanup()
         end
         if config.debug then
-          print(k, "keepalive timeout.")
+          print(utils.gettime(), k, "keepalive timeout.")
         end
         for connkey,obj in pairs(peer.ppclient_connection_map) do
           if obj.apt then
@@ -352,10 +373,10 @@ local function keepalive_peers(bindserv)
     end
 
     for key,apt in pairs(bindserv.clientmap) do
-      if utils.gettime() - apt.last_keepalive > 20 and apt ~= shared.remote_serv then
+      if utils.gettime() - apt.last_keepalive > config.peer_timeout and apt ~= shared.remote_serv then
         apt:cleanup()
         if config.debug then
-          print(key, "keepalive timeout.")
+          print(utils.gettime(), key, "keepalive timeout.")
         end
       end
     end
@@ -378,6 +399,7 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
             obj.incoming_count = obj.incoming_count - 1
             if obj[conn_key] then
               obj[conn_key]:send(v)
+              obj.sending = true
             end
             found = true
             break
@@ -446,7 +468,7 @@ local function allowed_map_cleanup(bindserv)
   while not bindserv.stop do
     for host,t in pairs(shared.allowed_map) do
       for port,last_alive in pairs(t) do
-        if utils.gettime() - last_alive > 30 then
+        if utils.gettime() - last_alive > config.peer_timeout then
           t[port] = nil
         end
       end
@@ -620,8 +642,9 @@ function bind_service_mt:bind()
         connected = true,
       }
 
-      local connection_map = peer.ppclient_connection_map
-      connection_map[connkey] = obj
+      peer.ppclient_connection_map[connkey] = obj
+
+      local weak_obj = utils.weakify_object(obj)
 
       _send(peer.apt, {
           type = "ppconnect",
@@ -632,7 +655,7 @@ function bind_service_mt:bind()
 
       apt:bind{
         onread = function(buf)
-          local obj = connection_map[connkey]
+          local obj = weak_obj
           table.insert(obj.input_queue, buf)
 
           if #(obj.input_queue) > MAX_INPUT_QUEUE_SIZE then
@@ -643,13 +666,10 @@ function bind_service_mt:bind()
           _sync_port()
         end,
         onsendready = function()
-          local obj = connection_map[connkey]
+          local obj = weak_obj
+          obj.sending = false
           if obj.need_close_client then
-            connection_map[connkey] = nil
-            if obj.apt then
-              obj.apt:close()
-              obj.apt = nil
-            end
+            pp_close_client(obj, connkey)
           end
         end,
         ondisconnected = function(msg)
@@ -657,7 +677,7 @@ function bind_service_mt:bind()
             print("client disconnected", msg)
           end
 
-          local obj = connection_map[connkey]
+          local obj = weak_obj
           obj.connected = nil
           obj.apt = nil
           obj.need_send_disconnect = true
@@ -705,16 +725,22 @@ function bind(params)
     return false, "bind already."
   end
 
-  local peer = nil
+  local list = {}
   for k,v in pairs(shared.peer_map) do
     if k:find(params.clientkey) == 1 then
-      peer = v
-      break
+      table.insert(list, v)
     end
   end
-  if not peer then
+  
+  if #(list) == 0 then
     return false, "NAT not completed."
   end
+
+  table.sort(list, function(a, b)
+    return a.apt.last_keepalive > b.apt.last_keepalive
+  end)
+
+  local peer = list[1]
 
   local t
   t = {
