@@ -88,17 +88,20 @@ function command_map.list(apt, host, port, msg)
     if config.debug then
       print("list", i, cjson.encode(v))
     end
-    local peer = shared.peer_map[v.clientkey]
+    local clientkey = v.clientkey
+    local peer = shared.peer_map[clientkey]
     if peer then
       local output_index = _send(peer.apt, {type = "ppkeepalive"})
       peer.apt.ppkeepalive_map[output_index] = true
     else
       local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+      apt.peer_key = clientkey
       local output_index = _send(apt, {type = "ppkeepalive"})
       apt.ppkeepalive_map[output_index] = true
 
       if v.internal_host and v.internal_port then
         local apt = shared.bindserv.getapt(v.internal_host, v.internal_port, nil, string.format("%s:%d", v.internal_host, v.internal_port))
+        apt.peer_key = clientkey
         local output_index = _send(apt, {type = "ppkeepalive"})
         apt.ppkeepalive_map[output_index] = true
       end
@@ -107,6 +110,7 @@ function command_map.list(apt, host, port, msg)
         for i,v in ipairs(v.data) do
           if v.host and v.port then
             local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+            apt.peer_key = clientkey
             local output_index = _send(apt, {type = "ppkeepalive"})
             apt.ppkeepalive_map[output_index] = true
           end
@@ -373,7 +377,19 @@ local function keepalive_peers(bindserv)
     end
 
     for key,apt in pairs(bindserv.clientmap) do
-      if utils.gettime() - apt.last_keepalive > config.peer_timeout and apt ~= shared.remote_serv then
+      local need_cleanup = false
+      if apt.peer_key then
+        local peer = shared.peer_map[apt.peer_key]
+        if peer and peer.apt ~= apt then
+          need_cleanup = true
+        end
+      end
+
+      if not need_cleanup and utils.gettime() - apt.last_keepalive > config.peer_timeout and apt ~= shared.remote_serv then
+        need_cleanup = true
+      end
+      
+      if need_cleanup then
         apt:cleanup()
         if config.debug then
           print(utils.gettime(), key, "keepalive timeout.")
