@@ -17,14 +17,14 @@ local collectgarbage = collectgarbage
 local connkey_index = 0
 
 local function onPost(req, resp)
-  local params = json.decode(req.body)
-  for k,v in pairs(params) do
-    config[k] = v
-  end
-  return resp:reply(200, "OK")
+    local params = json.decode(req.body)
+    for k, v in pairs(params) do
+        config[k] = v
+    end
+    return resp:reply(200, "OK")
 end
 
 return {
-  route = "/setting",
-  onPost = onPost,
+    route = "/setting",
+    onPost = onPost
 }
