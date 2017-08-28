@@ -51,14 +51,6 @@ local function _get_peer(apt)
     end
 end
 
-local function _send(apt, msg)
-    msg.clientkey = clientkey
-    if config.debug then
-        print(apt.host, apt.port, "send", cjson.encode(msg))
-    end
-    return apt:send(objectbuf.encode(msg, sym))
-end
-
 function command_map.list(apt, host, port, msg)
     if not shared.internal_port then
         shared.internal_port = shared.bindserv.serv:getPort()
@@ -95,14 +87,11 @@ function command_map.list(apt, host, port, msg)
         end
         local clientkey = v.clientkey
         local peer = shared.peer_map[clientkey]
-        if peer then
-            local output_index = _send(peer.apt, {type = "ppkeepalive"})
-            peer.apt.ppkeepalive_map[output_index] = true
-        else
+        if not peer then
             local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
             apt.peer_key = clientkey
-            local output_index = _send(apt, {type = "ppkeepalive"})
-            apt.ppkeepalive_map[output_index] = true
+            local output_index = apt:send_msg {type = "ppkeepalive"}
+            apt.ppkeepalive_output_index_map[output_index] = true
 
             if v.internal_host and v.internal_port then
                 local apt =
@@ -113,8 +102,8 @@ function command_map.list(apt, host, port, msg)
                     string.format("%s:%d", v.internal_host, v.internal_port)
                 )
                 apt.peer_key = clientkey
-                local output_index = _send(apt, {type = "ppkeepalive"})
-                apt.ppkeepalive_map[output_index] = true
+                local output_index = apt:send_msg {type = "ppkeepalive"}
+                apt.ppkeepalive_output_index_map[output_index] = true
             end
 
             if v.data then
@@ -122,17 +111,12 @@ function command_map.list(apt, host, port, msg)
                     if v.host and v.port then
                         local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
                         apt.peer_key = clientkey
-                        local output_index = _send(apt, {type = "ppkeepalive"})
-                        apt.ppkeepalive_map[output_index] = true
+                        local output_index = apt:send_msg {type = "ppkeepalive"}
+                        apt.ppkeepalive_output_index_map[output_index] = true
                     end
                 end
             end
         end
-        -- if not peer then
-        -- print("send ppkeepalive", v.host, v.port)
-        -- else
-        -- print("ignore nat", v.clientkey, peer)
-        -- end
     end
 end
 
@@ -177,7 +161,7 @@ function command_map.ppconnect(apt, host, port, msg)
                 print("onconnected")
             end
             obj.connected = true
-            _send(apt, {type = "ppconnected", connkey = connkey})
+            apt:send_msg {type = "ppconnected", connkey = connkey}
         end,
         onread = function(buf)
             local obj = weak_obj
@@ -204,7 +188,6 @@ function command_map.ppconnect(apt, host, port, msg)
                 print("remote disconnected", msgstr)
             end
             obj.need_send_disconnect = true
-            -- _send(apt, {type = "ppdisconnectedmaster", connkey = msg.connkey})
         end
     }
 
@@ -331,16 +314,13 @@ local function list_peers(bindserv)
             }
         end
 
-        _send(
-            shared.remote_serv,
-            {
-                type = "list",
-                internal_host = shared.internal_host,
-                internal_port = shared.internal_port,
-                internal_netmask = shared.internal_netmask,
-                data = data
-            }
-        )
+        shared.remote_serv:send_msg {
+            type = "list",
+            internal_host = shared.internal_host,
+            internal_port = shared.internal_port,
+            internal_netmask = shared.internal_netmask,
+            data = data
+        }
         -- send{type = "keepalive"}
         fan.sleep(3)
     end
@@ -350,15 +330,15 @@ local function keepalive_peers(bindserv)
     while not bindserv.stop do
         _sync_port()
         for k, peer in pairs(shared.peer_map) do
-            if utils.gettime() - peer.apt.last_keepalive > config.keepalive_delay then
-                local output_index = _send(peer.apt, {type = "ppkeepalive"})
-                peer.apt.ppkeepalive_map[output_index] = true
+            if utils.gettime() - peer.apt.last_outgoing_time > config.keepalive_delay then
+                local output_index = peer.apt:send_msg {type = "ppkeepalive"}
+                peer.apt.ppkeepalive_output_index_map[output_index] = true
             end
         end
 
         local live_peers = {}
         for k, peer in pairs(shared.peer_map) do
-            if utils.gettime() - peer.apt.last_keepalive > config.peer_timeout then
+            if utils.gettime() - peer.apt.last_incoming_time > config.peer_timeout then
                 if peer.apt then
                     peer.apt:cleanup()
                 end
@@ -401,7 +381,7 @@ local function keepalive_peers(bindserv)
             end
 
             if
-                not need_cleanup and utils.gettime() - apt.last_keepalive > config.peer_timeout and
+                not need_cleanup and utils.gettime() - apt.last_incoming_time > config.peer_timeout and
                     apt ~= shared.remote_serv
              then
                 need_cleanup = true
@@ -465,15 +445,12 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
                 local auto_index = obj.auto_index
                 obj.auto_index = auto_index < config.auto_index_max and auto_index + 1 or 1
                 local forward_index =
-                    _send(
-                    peer.apt,
-                    {
-                        type = flush_type,
-                        connkey = connkey,
-                        data = data,
-                        index = auto_index
-                    }
-                )
+                    peerapt:send_msg {
+                    type = flush_type,
+                    connkey = connkey,
+                    data = data,
+                    index = auto_index
+                }
 
                 obj.outgoing_cache[forward_index] = true
                 obj.outgoing_count = obj.outgoing_count + 1
@@ -486,7 +463,7 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
         elseif obj.need_send_disconnect and obj.outgoing_count == 0 then
             obj.need_send_disconnect = nil
             peer[map_key][connkey] = nil
-            _send(peer.apt, {type = disconnect_type, connkey = connkey})
+            peer.apt:send_msg {type = disconnect_type, connkey = connkey}
         end
     end
 end
@@ -521,13 +498,13 @@ local function allowed_map_cleanup(bindserv)
 end
 
 local function bind_apt(apt)
-    apt.ppkeepalive_map = {}
+    apt.ppkeepalive_output_index_map = {}
     apt.index_conn_map = {}
     setmetatable(apt.index_conn_map, {__mode = "v"})
 
     config.weaktable[string.format("bind_apt_%s:%d", apt.host, apt.port)] = apt
 
-    apt.last_keepalive = utils.gettime()
+    apt.last_incoming_time = utils.gettime()
 
     local host = apt.host
     local port = apt.port
@@ -550,7 +527,7 @@ local function bind_apt(apt)
             print(os.date("%X"), host, port, cjson.encode(msg))
         end
 
-        apt.last_keepalive = utils.gettime()
+        apt.last_incoming_time = utils.gettime()
         if msg.clientkey then
             ppkeepalive(apt, host, port, msg)
         end
@@ -563,7 +540,6 @@ local function bind_apt(apt)
 
     apt.onsent = function(index)
         -- print("onsent", apt)
-        apt.last_keepalive = utils.gettime()
         local obj = apt.index_conn_map[index]
 
         if obj then
@@ -577,8 +553,8 @@ local function bind_apt(apt)
             end
 
             _sync_port()
-        elseif apt.ppkeepalive_map[index] then
-            apt.ppkeepalive_map[index] = nil
+        elseif apt.ppkeepalive_output_index_map[index] then
+            apt.ppkeepalive_output_index_map[index] = nil
         end
     end
 
@@ -591,8 +567,8 @@ local function bind_apt(apt)
             return false
         else
             local output_index = string.unpack("<I4", package)
-            if apt.ppkeepalive_map[output_index] then
-                apt.ppkeepalive_map[output_index] = nil
+            if apt.ppkeepalive_output_index_map[output_index] then
+                apt.ppkeepalive_output_index_map[output_index] = nil
                 if config.debug then
                     print("drop ppkeepalive")
                 end
@@ -628,6 +604,17 @@ function onStart()
         nil,
         string.format("%s:%d", config.remote_host, config.remote_port)
     )
+
+    local apt_mt = getmetatable(shared.remote_serv)
+
+    apt_mt.send_msg = function(apt, msg)
+        msg.clientkey = clientkey
+        if config.debug then
+            print(apt.host, apt.port, "send", cjson.encode(msg))
+        end
+        apt.last_outgoing_time = utils.gettime()
+        return apt:send(objectbuf.encode(msg, sym))
+    end
 
     bind_apt(shared.remote_serv)
 
@@ -692,15 +679,12 @@ function bind_service_mt:bind()
 
             local weak_obj = utils.weakify_object(obj)
 
-            _send(
-                peer.apt,
-                {
-                    type = "ppconnect",
-                    connkey = connkey,
-                    host = self.remote_host,
-                    port = self.remote_port
-                }
-            )
+            peer.apt:send_msg {
+                type = "ppconnect",
+                connkey = connkey,
+                host = self.remote_host,
+                port = self.remote_port
+            }
 
             apt:bind {
                 onread = function(buf)
@@ -788,7 +772,7 @@ function bind(params)
     table.sort(
         list,
         function(a, b)
-            return a.apt.last_keepalive > b.apt.last_keepalive
+            return a.apt.last_incoming_time > b.apt.last_incoming_time
         end
     )
 

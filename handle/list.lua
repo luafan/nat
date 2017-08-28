@@ -85,9 +85,10 @@ local function onGet(req, resp)
         local item = {
             key = key,
             clientkey = peer and peer.clientkey or "N/A",
-            last_keepalive = utils.gettime() - apt.last_keepalive,
+            last_keepalive = utils.gettime() - apt.last_incoming_time,
             output_wait_count = apt._output_wait_count,
             output_index = apt._output_index,
+            latency = apt.latency,
             output_wait_ack_count = count_table_size(apt._output_wait_ack),
             output_wait_index_map_count = count_table_size(apt._output_wait_package_parts_map),
             output_ack_package_count = count_table_size(apt._output_ack_package),
