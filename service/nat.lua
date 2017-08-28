@@ -505,6 +505,7 @@ local function bind_apt(apt)
     config.weaktable[string.format("bind_apt_%s:%d", apt.host, apt.port)] = apt
 
     apt.last_incoming_time = utils.gettime()
+    apt.last_outgoing_time = utils.gettime()
 
     local host = apt.host
     local port = apt.port
