@@ -445,7 +445,7 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
                 local auto_index = obj.auto_index
                 obj.auto_index = auto_index < config.auto_index_max and auto_index + 1 or 1
                 local forward_index =
-                    peerapt:send_msg {
+                    peer.apt:send_msg {
                     type = flush_type,
                     connkey = connkey,
                     data = data,
