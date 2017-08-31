@@ -81,7 +81,7 @@ local function onGet(req, resp)
     local nat = service.get("nat")
 
     for key, apt in pairs(shared.bindserv.clientmap) do
-        local peer = nat.get_peer(apt)
+        local peer = apt:get_peer()
         local item = {
             key = key,
             clientkey = peer and peer.clientkey or "N/A",
