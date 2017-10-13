@@ -404,7 +404,7 @@ local function keepalive_peers(bindserv)
                     need_cleanup = true
                     local peer = shared.weak_apt_peer_map[apt]
                     if peer then
-                        for k,v in shared.peer_map do
+                        for k,v in pairs(shared.peer_map) do
                             if v == peer then
                                 shared.peer_map[k] = nil
                                 break
