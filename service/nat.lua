@@ -25,6 +25,8 @@ local shared = require "shared"
 local sym = objectbuf.symbol(require "nat_dic")
 
 shared.peer_map = {}
+shared.weak_apt_peer_map = {}
+setmetatable(shared.weak_apt_peer_map, {_mode = "kv"})
 shared.bind_map = {}
 
 local allowed_map = {}
@@ -135,7 +137,7 @@ function command_map.ppconnect(apt, host, port, msg)
 
     local connkey = msg.connkey
 
-    local connection_map = apt:get_peer().ppservice_connection_map
+    local connection_map = shared.weak_apt_peer_map[apt].ppservice_connection_map
 
     if connection_map[connkey] then
         return
@@ -188,7 +190,7 @@ function command_map.ppconnect(apt, host, port, msg)
             local obj = weak_obj
             obj.sending = false
             if obj.need_close_service then
-                pp_close_service(apt:get_peer(), connkey)
+                pp_close_service(shared.weak_apt_peer_map[apt], connkey)
             end
         end,
         ondisconnected = function(msgstr)
@@ -209,7 +211,7 @@ function command_map.ppconnected(apt, host, port, msg)
     if config.debug then
         print(host, port, cjson.encode(msg))
     end
-    local peer = apt:get_peer()
+    local peer = shared.weak_apt_peer_map[apt]
     local obj = peer.ppclient_connection_map[msg.connkey]
     if obj then
         obj.connected = true
@@ -230,7 +232,7 @@ function command_map.ppdisconnectedmaster(apt, host, port, msg)
     if config.debug then
         print(host, port, cjson.encode(msg))
     end
-    local peer = apt:get_peer()
+    local peer = shared.weak_apt_peer_map[apt]
     local obj = peer.ppclient_connection_map[msg.connkey]
     -- clean up client apt.
     if obj then
@@ -257,7 +259,7 @@ function command_map.ppdisconnectedclient(apt, host, port, msg)
     if config.debug then
         print(host, port, cjson.encode(msg))
     end
-    local peer = apt:get_peer()
+    local peer = shared.weak_apt_peer_map[apt]
     local obj = peer.ppservice_connection_map[msg.connkey]
     -- clean up server conn.
     if obj then
@@ -270,7 +272,7 @@ function command_map.ppdisconnectedclient(apt, host, port, msg)
 end
 
 function command_map.ppdata_req(apt, host, port, msg)
-    local peer = apt:get_peer()
+    local peer = shared.weak_apt_peer_map[apt]
     local obj = peer.ppservice_connection_map[msg.connkey]
     if obj and not obj.incoming_cache[msg.index] then
         obj.incoming_cache[msg.index] = msg.data
@@ -283,7 +285,7 @@ function command_map.ppdata_req(apt, host, port, msg)
 end
 
 function command_map.ppdata_resp(apt, host, port, msg)
-    local peer = apt:get_peer()
+    local peer = shared.weak_apt_peer_map[apt]
     local obj = peer.ppclient_connection_map[msg.connkey]
     if obj and obj.connected and not obj.incoming_cache[msg.index] then
         obj.incoming_cache[msg.index] = msg.data
@@ -309,6 +311,7 @@ local function create_or_update_peer(apt, host, port, msg)
         }
 
         shared.peer_map[msg.clientkey] = peer
+        shared.weak_apt_peer_map[apt] = peer
     else
         peer.host = host
         peer.port = port
@@ -399,9 +402,14 @@ local function keepalive_peers(bindserv)
                 local timeout = apt.latency and config.peer_timeout or config.none_peer_timeout
                 if utils.gettime() - apt.last_incoming_time > timeout then
                     need_cleanup = true
-                    local peer, key = apt:get_peer()
-                    if peer and peer.apt == apt then
-                        shared.peer_map[key] = nil
+                    local peer = shared.weak_apt_peer_map[apt]
+                    if peer then
+                        for k,v in shared.peer_map do
+                            if v == peer then
+                                shared.peer_map[k] = nil
+                                break
+                            end
+                        end
                     end
                 end
             end
@@ -620,18 +628,6 @@ function onStart()
     apt_mt.send_keepalive = function(apt)
         local output_index = apt:send_msg {type = "ppkeepalive"}
         apt.ppkeepalive_output_index_map[output_index] = true
-    end
-
-    apt_mt.get_peer = function(apt)
-        if apt.peer_key then
-            return shared.peer_map[apt.peer_key], apt.peer_key
-        end
-
-        for k, v in pairs(shared.peer_map) do
-            if v.apt == apt then
-                return v, k
-            end
-        end
     end
 
     bind_apt(shared.remote_serv)
