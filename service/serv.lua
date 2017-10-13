@@ -19,9 +19,6 @@ local serv = nil
 
 function command_map.list(apt, msg)
     local conn = conn_map[apt]
-    if msg.clientkey then
-        conn.clientkey = msg.clientkey
-    end
     if msg.internal_host and msg.internal_port then
         conn.internal_host = msg.internal_host
         conn.internal_port = msg.internal_port
@@ -45,31 +42,23 @@ function command_map.list(apt, msg)
             for k, v in pairs(v.data) do
                 table.insert(data, v)
             end
+
+            local obj = {
+                host = k.host,
+                port = k.port,
+                clientkey = v.clientkey,
+                data = data
+            }
+
             if apt.host == k.host then
+                -- if two peers come from same ip
                 if v.internal_host and v.internal_port then
-                    table.insert(
-                        t,
-                        {
-                            host = v.internal_host,
-                            port = v.internal_port,
-                            clientkey = v.clientkey,
-                            data = data
-                        }
-                    )
+                    obj.internal_host = v.internal_host
+                    obj.internal_port = v.internal_port
                 end
-            else
-                table.insert(
-                    t,
-                    {
-                        host = k.host,
-                        port = k.port,
-                        internal_host = conn.internal_netmask == apt.internal_netmask and v.internal_host or nil,
-                        internal_port = conn.internal_netmask == apt.internal_netmask and v.internal_port or nil,
-                        clientkey = v.clientkey,
-                        data = data
-                    }
-                )
             end
+
+            table.insert(t, obj)
         end
     end
 
@@ -84,16 +73,25 @@ function onStart()
     status = "running"
     serv = connector.bind(string.format("udp://0.0.0.0:%d", config.server_port))
     serv.onaccept = function(apt)
-        print("onaccept")
-        conn_map[apt] = {last_keepalive = utils.gettime(), data = {}}
-
         apt.onread = function(body)
-            conn_map[apt].last_keepalive = utils.gettime()
-
             local msg = objectbuf.decode(body, sym)
+            if msg.type == "echo" then
+                apt:send(objectbuf.encode({type = msg.type, host = apt.host, port = apt.port}, sym))
+                return
+            end
+
+            local conn = conn_map[apt]
+            if not conn then
+                conn = {last_keepalive = utils.gettime(), data = {}}
+                conn_map[apt] = conn
+            else
+                conn.last_keepalive = utils.gettime()
+            end
+
             print(apt.host, apt.port, cjson.encode(msg))
             if msg.clientkey and not key_conn_map[msg.clientkey] then
-                key_conn_map[msg.clientkey] = conn_map[apt]
+                key_conn_map[msg.clientkey] = conn
+                conn.clientkey = msg.clientkey
             end
 
             local command = command_map[msg.type]
@@ -110,6 +108,9 @@ function onStart()
                     if utils.gettime() - v.last_keepalive > 30 then
                         print(k.dest, "keepalive timeout.")
                         k:cleanup()
+                        if v.clientkey then
+                            key_conn_map[v.clientkey] = nil
+                        end
                         conn_map[k] = nil
                     end
                 end

@@ -10,6 +10,7 @@ local ipairs = ipairs
 local coroutine = coroutine
 
 local fan = require "fan"
+local tcpd = require "fan.tcpd"
 local config = require "config"
 local connector = require "fan.connector"
 local objectbuf = require "fan.objectbuf"
@@ -170,6 +171,11 @@ function command_map.ppconnect(apt, host, port, msg)
         end,
         onread = function(buf)
             local obj = weak_obj
+            
+            if not obj.input_queue then
+                return
+            end
+            
             table.insert(obj.input_queue, buf)
 
             if #(obj.input_queue) > MAX_INPUT_QUEUE_SIZE then
@@ -319,7 +325,7 @@ local function list_peers(bindserv)
             }
         end
 
-        if shared.internal_port then
+        if shared.internal_port and fan.getinterfaces then
             for i, v in ipairs(fan.getinterfaces()) do
                 if v.type == "inet" then
                     if v.host ~= "127.0.0.1" then
@@ -393,6 +399,10 @@ local function keepalive_peers(bindserv)
                 local timeout = apt.latency and config.peer_timeout or config.none_peer_timeout
                 if utils.gettime() - apt.last_incoming_time > timeout then
                     need_cleanup = true
+                    local peer, key = apt:get_peer()
+                    if peer and peer.apt == apt then
+                        shared.peer_map[key] = nil
+                    end
                 end
             end
 
@@ -575,12 +585,14 @@ function onStart()
     end
     status = "running"
 
-    for i, v in ipairs(fan.getinterfaces()) do
-        if v.type == "inet" then
-            print(cjson.encode(v))
-            if v.name == "wlp3s0" or v.name == "en0" or v.name == "eth0" then
-                shared.internal_host = v.host
-                shared.internal_netmask = v.netmask
+    if fan.getinterfaces then
+        for i, v in ipairs(fan.getinterfaces()) do
+            if v.type == "inet" then
+                print(cjson.encode(v))
+                if v.name == "wlp3s0" or v.name == "en0" or v.name == "eth0" then
+                    shared.internal_host = v.host
+                    shared.internal_netmask = v.netmask
+                end
             end
         end
     end
@@ -612,12 +624,12 @@ function onStart()
 
     apt_mt.get_peer = function(apt)
         if apt.peer_key then
-            return shared.peer_map[apt.peer_key]
+            return shared.peer_map[apt.peer_key], apt.peer_key
         end
 
         for k, v in pairs(shared.peer_map) do
             if v.apt == apt then
-                return v
+                return v, k
             end
         end
     end
