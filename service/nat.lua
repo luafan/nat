@@ -26,7 +26,7 @@ local sym = objectbuf.symbol(require "nat_dic")
 
 shared.peer_map = {}
 shared.weak_apt_peer_map = {}
-setmetatable(shared.weak_apt_peer_map, {_mode = "kv"})
+setmetatable(shared.weak_apt_peer_map, {__mode = "kv"})
 shared.bind_map = {}
 
 local allowed_map = {}
