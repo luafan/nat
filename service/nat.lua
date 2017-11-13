@@ -95,12 +95,12 @@ function command_map.list(apt, host, port, msg)
     end
 
     for i, v in ipairs(msg.data) do
-        -- if config.debug then
-        print("list", i, cjson.encode(v))
-        -- end
+        if config.debug then
+            print("list", i, cjson.encode(v))
+        end
         local clientkey = v.clientkey
         local peer = shared.peer_map[clientkey]
-        if not peer then
+        if not peer or utils.gettime() - peer.apt.last_incoming_time > config.peer_timeout / 2 then
             local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
             apt.peer_key = clientkey
             apt:send_keepalive()
@@ -127,6 +127,25 @@ function command_map.list(apt, host, port, msg)
                 end
             end
         end
+    end
+end
+
+local function pp_close_service(peer, connkey)
+    local connection_map = peer.ppservice_connection_map
+    local obj = connection_map[connkey]
+    connection_map[connkey] = nil
+
+    if obj and obj.conn then
+        obj.conn:close()
+        obj.conn = nil
+    end
+end
+
+local function pp_close_client(obj, connkey)
+    obj.peer.ppclient_connection_map[connkey] = nil
+    if obj.apt then
+        obj.apt:close()
+        obj.apt = nil
     end
 end
 
@@ -220,14 +239,6 @@ function command_map.ppconnected(apt, host, port, msg)
     _sync_port()
 end
 
-local function pp_close_client(obj, connkey)
-    obj.peer.ppclient_connection_map[connkey] = nil
-    if obj.apt then
-        obj.apt:close()
-        obj.apt = nil
-    end
-end
-
 function command_map.ppdisconnectedmaster(apt, host, port, msg)
     if config.debug then
         print(host, port, cjson.encode(msg))
@@ -241,17 +252,6 @@ function command_map.ppdisconnectedmaster(apt, host, port, msg)
         if not obj.sending then
             pp_close_client(obj, msg.connkey)
         end
-    end
-end
-
-local function pp_close_service(peer, connkey)
-    local connection_map = peer.ppservice_connection_map
-    local obj = connection_map[connkey]
-    connection_map[connkey] = nil
-
-    if obj and obj.conn then
-        obj.conn:close()
-        obj.conn = nil
     end
 end
 
@@ -313,6 +313,7 @@ local function create_or_update_peer(apt, host, port, msg)
         shared.peer_map[msg.clientkey] = peer
         shared.weak_apt_peer_map[apt] = peer
     else
+        peer.apt = apt
         peer.host = host
         peer.port = port
     end
