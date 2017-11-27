@@ -231,9 +231,11 @@ function command_map.ppconnected(apt, host, port, msg)
         print(host, port, cjson.encode(msg))
     end
     local peer = shared.weak_apt_peer_map[apt]
-    local obj = peer.ppclient_connection_map[msg.connkey]
-    if obj then
-        obj.connected = true
+    if peer then
+        local obj = peer.ppclient_connection_map[msg.connkey]
+        if obj then
+            obj.connected = true
+        end
     end
 
     _sync_port()
@@ -273,10 +275,12 @@ end
 
 function command_map.ppdata_req(apt, host, port, msg)
     local peer = shared.weak_apt_peer_map[apt]
-    local obj = peer.ppservice_connection_map[msg.connkey]
-    if obj and not obj.incoming_cache[msg.index] then
-        obj.incoming_cache[msg.index] = msg.data
-        obj.incoming_count = obj.incoming_count + 1
+    if peer then
+        local obj = peer.ppservice_connection_map[msg.connkey]
+        if obj and not obj.incoming_cache[msg.index] then
+            obj.incoming_cache[msg.index] = msg.data
+            obj.incoming_count = obj.incoming_count + 1
+        end
     end
 
     _sync_port()
@@ -305,6 +309,7 @@ local function create_or_update_peer(apt, host, port, msg)
             apt = apt,
             host = host,
             port = port,
+            created = utils.gettime(),
             clientkey = msg.clientkey,
             ppservice_connection_map = {},
             ppclient_connection_map = {}

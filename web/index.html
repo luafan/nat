@@ -25,7 +25,9 @@
       $("#output_wait").text("output_wait: " + item.output_wait_count);
       $("#output_wait_ack").text("output_wait_ack: " + item.output_wait_ack_count);
       $("#output_wait_index_map").text("output_wait_index_map: " + item.output_wait_index_map_count);
-      $("#ppkeepalive_map").text("ppkeepalive_map: " + item.ppkeepalive_map_count);
+      $("#incoming_bytes_total").text("incoming_bytes_total: " + item.incoming_bytes_total);
+      $("#outgoing_bytes_total").text("outgoing_bytes_total: " + item.outgoing_bytes_total);
+      $("#peer_created").text("created: " + item.created);
       $("#ppclient_connection").text("client: " + item.ppclient_connection_count);
       $("#ppservice_connection").text("service: " + item.ppservice_connection_count);
     }
@@ -144,7 +146,9 @@
             <label name="output_wait" id="output_wait"></label>
             <label name="output_wait_ack" id="output_wait_ack"></label>
             <label name="output_wait_index_map" id="output_wait_index_map"></label>
-            <label name="ppkeepalive_map" id="ppkeepalive_map"></label>
+            <label name="incoming_bytes_total" id="incoming_bytes_total"></label>
+            <label name="outgoing_bytes_total" id="outgoing_bytes_total"></label>
+            <label name="peer_created" id="peer_created"></label>
             <label name="ppclient_connection" id="ppclient_connection"></label>
             <label name="ppservice_connection" id="ppservice_connection"></label>
             <a data-role="button" data-rel="back" data-theme="b">完成</a>

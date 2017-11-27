@@ -89,6 +89,9 @@ local function onGet(req, resp)
             output_wait_count = apt._output_wait_count,
             output_index = apt._output_index,
             latency = apt.latency,
+            created = peer and os.date("%c", math.floor(peer.created)) or "N/A",
+            incoming_bytes_total = string.format("%1.3f MB", apt.incoming_bytes_total / 1024.0 / 1024.0),
+            outgoing_bytes_total = string.format("%1.3f MB", apt.outgoing_bytes_total / 1024.0 / 1024.0),
             output_wait_ack_count = count_table_size(apt._output_wait_ack),
             output_wait_index_map_count = count_table_size(apt._output_wait_package_parts_map),
             output_ack_package_count = count_table_size(apt._output_ack_package),
@@ -96,8 +99,7 @@ local function onGet(req, resp)
             output_chain_count = count_chain_size(apt._output_chain),
             ppclient_connection_count = peer and count_table_size(peer.ppclient_connection_map) or "N/A",
             ppservice_connection_count = peer and count_table_size(peer.ppservice_connection_map) or "N/A",
-            ppkeepalive_map_count = apt.ppkeepalive_map and count_table_size(apt.ppkeepalive_map) or "N/A",
-            incoming = {}
+            incoming = {},
         }
 
         table.insert(map.list, item)

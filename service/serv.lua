@@ -39,6 +39,8 @@ function command_map.list(apt, msg)
     for k, v in pairs(conn_map) do
         if k ~= apt then
             local data = {}
+            v.data[string.format("%s:%d", k.host, k.port)] = nil
+
             for k, v in pairs(v.data) do
                 table.insert(data, v)
             end
