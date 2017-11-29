@@ -736,13 +736,13 @@ function bind_service_mt:bind()
                 end
             }
 
-            config.weaktable[string.format("conn_apt_%d", connkey)] = apt
-            config.weaktable[string.format("conn_obj_%d", connkey)] = obj
+            config.weaktable[string.format("service_apt_%s_%d", peer.clientkey, connkey)] = apt
+            config.weaktable[string.format("service_obj_%s_%d", peer.clientkey, connkey)] = obj
         end
     }
 
     if self.serv then
-        config.weaktable[string.format("bind_%d", port)] = self.serv
+        config.weaktable[string.format("service_%s_%d", peer.clientkey, port)] = self.serv
         shared.bind_map[port] = self
         return true, "submitted."
     else

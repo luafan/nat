@@ -20,7 +20,6 @@
       $("#detail_title").text(item.display_title);
       $("#latency").text("latency: " + item.latency);
       $("#last_keepalive").text("keepalive: " + item.last_keepalive);
-      $("#incoming").text("incoming: " + item.incoming.length);
       $("#output_chain").text("output_chain: " + item.output_chain_count);
       $("#output_wait").text("output_wait: " + item.output_wait_count);
       $("#output_wait_ack").text("output_wait_ack: " + item.output_wait_ack_count);
@@ -141,7 +140,6 @@
             <h2 id="detail_title" name="detail_title">title</h2>
             <label name="latency" id="latency"></label>
             <label name="last_keepalive" id="last_keepalive"></label>
-            <label name="incoming" id="incoming"></label>
             <label name="output_chain" id="output_chain"></label>
             <label name="output_wait" id="output_wait"></label>
             <label name="output_wait_ack" id="output_wait_ack"></label>

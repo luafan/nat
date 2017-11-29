@@ -105,30 +105,20 @@ local function onGet(req, resp)
         table.insert(map.list, item)
 
         for output_index, incoming_object in pairs(apt._incoming_map) do
-            if incoming_object.done then
-                table.insert(
-                    item.incoming,
-                    {
-                        index = output_index,
-                        total = incoming_object.count
-                    }
-                )
-            else
-                local count = 0
-                for idx, body in pairs(incoming_object.items) do
-                    if body then
-                        count = count + 1
-                    end
+            local count = 0
+            for idx, body in pairs(incoming_object.items) do
+                if body then
+                    count = count + 1
                 end
-                table.insert(
-                    item.incoming,
-                    {
-                        index = output_index,
-                        count = count,
-                        total = incoming_object.count
-                    }
-                )
             end
+            table.insert(
+                item.incoming,
+                {
+                    index = output_index,
+                    count = count,
+                    total = incoming_object.count
+                }
+            )
         end
 
         if peer then
