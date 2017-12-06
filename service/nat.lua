@@ -156,7 +156,8 @@ function command_map.ppconnect(apt, host, port, msg)
 
     local connkey = msg.connkey
 
-    local connection_map = shared.weak_apt_peer_map[apt].ppservice_connection_map
+    local peer = shared.weak_apt_peer_map[apt]
+    local connection_map = peer.ppservice_connection_map
 
     if connection_map[connkey] then
         return
@@ -223,7 +224,8 @@ function command_map.ppconnect(apt, host, port, msg)
         end
     }
 
-    config.weaktable[string.format("ppconnect_%d", connkey)] = obj.conn
+    config.weaktable[string.format("ppconnect_conn_%s_%d", peer.clientkey, connkey)] = obj.conn
+    config.weaktable[string.format("ppconnect_obj_%s__%d", peer.clientkey, connkey)] = obj
 end
 
 function command_map.ppconnected(apt, host, port, msg)
@@ -317,6 +319,8 @@ local function create_or_update_peer(apt, host, port, msg)
 
         shared.peer_map[msg.clientkey] = peer
         shared.weak_apt_peer_map[apt] = peer
+
+        config.weaktable[string.format("peer_%s_%s", msg.clientkey, peer)] = peer
     else
         peer.apt = apt
         peer.host = host
@@ -687,7 +691,7 @@ function bind_service_mt:bind()
                 outgoing_count = 0,
                 apt = apt,
                 bind_port = port,
-                peer = peer,
+                peer = utils.weakify_object(peer),
                 host = peer.host,
                 port = peer.port,
                 auto_index = 1,
