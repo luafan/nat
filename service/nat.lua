@@ -225,7 +225,7 @@ function command_map.ppconnect(apt, host, port, msg)
     }
 
     config.weaktable[string.format("ppconnect_conn_%s_%d", peer.clientkey, connkey)] = obj.conn
-    config.weaktable[string.format("ppconnect_obj_%s__%d", peer.clientkey, connkey)] = obj
+    config.weaktable[string.format("ppconnect_obj_%s_%d", peer.clientkey, connkey)] = obj
 end
 
 function command_map.ppconnected(apt, host, port, msg)
@@ -318,14 +318,14 @@ local function create_or_update_peer(apt, host, port, msg)
         }
 
         shared.peer_map[msg.clientkey] = peer
-        shared.weak_apt_peer_map[apt] = peer
-
         config.weaktable[string.format("peer_%s_%s", msg.clientkey, peer)] = peer
     else
         peer.apt = apt
         peer.host = host
         peer.port = port
     end
+
+    shared.weak_apt_peer_map[apt] = peer
 end
 
 local function list_peers(bindserv)
@@ -427,7 +427,7 @@ local function keepalive_peers(bindserv)
             if need_cleanup then
                 apt:cleanup()
                 -- if config.debug then
-                print(utils.gettime(), key, "client keepalive timeout.")
+                print(utils.gettime(), key, "client has been cleaned up.")
             -- end
             end
         end
@@ -532,7 +532,7 @@ local function bind_apt(apt)
     local host = apt.host
     local port = apt.port
 
-    apt.onread = function(body)
+    apt.onread = function(apt, body)
         local msg = objectbuf.decode(body, sym)
         if not msg then
             print("decode failed.", host, port, #(body))
@@ -556,13 +556,13 @@ local function bind_apt(apt)
         end
     end
 
-    apt.onsent = function(index)
+    apt.onsent = function(apt, package)
         -- print("onsent", apt)
-        local obj = apt.index_conn_map[index]
+        local obj = apt.index_conn_map[package.output_index]
 
         if obj then
             obj.outgoing_count = obj.outgoing_count - 1
-            apt.index_conn_map[index] = nil
+            apt.index_conn_map[package.output_index] = nil
 
             if obj.pause_read and #(obj.input_queue) < MAX_INPUT_QUEUE_SIZE / 2 then
                 obj.pause_read:resume_read()
@@ -570,21 +570,21 @@ local function bind_apt(apt)
             end
 
             _sync_port()
-        elseif apt.ppkeepalive_output_index_map[index] then
-            apt.ppkeepalive_output_index_map[index] = nil
+        elseif apt.ppkeepalive_output_index_map[package.output_index] then
+            apt.ppkeepalive_output_index_map[package.output_index] = nil
         end
     end
 
-    apt.ontimeout = function(package)
+    apt.ontimeout = function(apt, package)
         local alive = shared.allowed_map_test(host, port)
         if not alive then
             if config.debug then
-                print("not alive, drop", #(package), host, port)
+                print("not alive, drop", package.body and #(package.body) or (package.body_end - package.body_begin + 1), host, port)
             end
             -- drop dead client's packet.
             return false
         else
-            local output_index = string.unpack("<I4", package)
+            local output_index = package.output_index
             if apt.ppkeepalive_output_index_map[output_index] then
                 apt.ppkeepalive_output_index_map[output_index] = nil
 

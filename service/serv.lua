@@ -75,7 +75,7 @@ function onStart()
     status = "running"
     serv = connector.bind(string.format("udp://0.0.0.0:%d", config.server_port))
     serv.onaccept = function(apt)
-        apt.onread = function(body)
+        apt.onread = function(apt, body)
             local msg = objectbuf.decode(body, sym)
             if msg.type == "echo" then
                 apt:send(objectbuf.encode({type = msg.type, host = apt.host, port = apt.port}, sym))
