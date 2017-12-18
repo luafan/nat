@@ -17,3 +17,5 @@ none_peer_timeout = tonumber(os.getenv("NONE_PEER_TIMEOUT") or 10)
 auto_index_max = tonumber(os.getenv("AUTO_INDEX_MAX") or 65535)
 
 outgoing_count_max = tonumber(os.getenv("OUTGOING_MAX") or 10)
+
+drop_package_outside_window = os.getenv("DROP_PACKAGE_OUTSIDE_WINDOW") == "true"
