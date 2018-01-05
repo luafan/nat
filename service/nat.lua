@@ -24,9 +24,9 @@ local shared = require "shared"
 
 local sym = objectbuf.symbol(require "nat_dic")
 
-shared.peer_map = {}
+shared.clientkey_apt_map = {}
 shared.weak_apt_peer_map = {}
-setmetatable(shared.weak_apt_peer_map, {__mode = "kv"})
+-- setmetatable(shared.weak_apt_peer_map, {__mode = "kv"})
 shared.bind_map = {}
 
 local allowed_map = {}
@@ -95,14 +95,13 @@ function command_map.list(apt, host, port, msg)
     end
 
     for i, v in ipairs(msg.data) do
-        if config.debug then
+        if config.debug_nat then
             print("list", i, cjson.encode(v))
         end
         local clientkey = v.clientkey
-        local peer = shared.peer_map[clientkey]
-        if not peer or utils.gettime() - peer.apt.last_incoming_time > config.peer_timeout / 2 then
-            local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
-            apt.peer_key = clientkey
+        local apt = shared.clientkey_apt_map[clientkey]
+        if true then
+                local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
             apt:send_keepalive()
 
             if v.internal_host and v.internal_port then
@@ -113,15 +112,13 @@ function command_map.list(apt, host, port, msg)
                     nil,
                     string.format("%s:%d", v.internal_host, v.internal_port)
                 )
-                apt.peer_key = clientkey
                 apt:send_keepalive()
             end
 
-            if v.data then
+            if v.data and false then
                 for i, v in ipairs(v.data) do
                     if v.host and v.port then
                         local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
-                        apt.peer_key = clientkey
                         apt:send_keepalive()
                     end
                 end
@@ -150,7 +147,7 @@ local function pp_close_client(obj, connkey)
 end
 
 function command_map.ppconnect(apt, host, port, msg)
-    if config.debug then
+    if config.debug_nat then
         print(host, port, cjson.encode(msg))
     end
 
@@ -185,7 +182,7 @@ function command_map.ppconnect(apt, host, port, msg)
         port = msg.port,
         onconnected = function()
             local obj = weak_obj
-            if config.debug then
+            if config.debug_nat then
                 print("onconnected")
             end
             obj.connected = true
@@ -193,11 +190,11 @@ function command_map.ppconnect(apt, host, port, msg)
         end,
         onread = function(buf)
             local obj = weak_obj
-            
+
             if not obj.input_queue then
                 return
             end
-            
+
             table.insert(obj.input_queue, buf)
 
             if #(obj.input_queue) > MAX_INPUT_QUEUE_SIZE then
@@ -217,7 +214,7 @@ function command_map.ppconnect(apt, host, port, msg)
             local obj = weak_obj
             obj.connected = nil
             obj.conn = nil
-            if config.debug then
+            if config.debug_nat then
                 print("remote disconnected", msgstr)
             end
             obj.need_send_disconnect = true
@@ -229,7 +226,7 @@ function command_map.ppconnect(apt, host, port, msg)
 end
 
 function command_map.ppconnected(apt, host, port, msg)
-    if config.debug then
+    if config.debug_nat then
         print(host, port, cjson.encode(msg))
     end
     local peer = shared.weak_apt_peer_map[apt]
@@ -244,7 +241,7 @@ function command_map.ppconnected(apt, host, port, msg)
 end
 
 function command_map.ppdisconnectedmaster(apt, host, port, msg)
-    if config.debug then
+    if config.debug_nat then
         print(host, port, cjson.encode(msg))
     end
     local peer = shared.weak_apt_peer_map[apt]
@@ -260,7 +257,7 @@ function command_map.ppdisconnectedmaster(apt, host, port, msg)
 end
 
 function command_map.ppdisconnectedclient(apt, host, port, msg)
-    if config.debug then
+    if config.debug_nat then
         print(host, port, cjson.encode(msg))
     end
     local peer = shared.weak_apt_peer_map[apt]
@@ -305,10 +302,9 @@ function command_map.ppdata_resp(apt, host, port, msg)
 end
 
 local function create_or_update_peer(apt, host, port, msg)
-    local peer = shared.peer_map[msg.clientkey]
+    local peer = shared.weak_apt_peer_map[apt]
     if not peer then
         peer = {
-            apt = apt,
             host = host,
             port = port,
             created = utils.gettime(),
@@ -317,24 +313,25 @@ local function create_or_update_peer(apt, host, port, msg)
             ppclient_connection_map = {}
         }
 
-        shared.peer_map[msg.clientkey] = peer
         config.weaktable[string.format("peer_%s_%s", msg.clientkey, peer)] = peer
     else
-        peer.apt = apt
         peer.host = host
         peer.port = port
     end
 
+    apt.peer_key = msg.clientkey
+
+    shared.clientkey_apt_map[msg.clientkey] = apt
     shared.weak_apt_peer_map[apt] = peer
 end
 
 local function list_peers(bindserv)
     while not bindserv.stop do
         local data = {}
-        for clientkey, peer in pairs(shared.peer_map) do
-            data[clientkey] = {
-                host = peer.apt.host,
-                port = peer.apt.port
+        for apt, peer in pairs(shared.weak_apt_peer_map) do
+            data[apt.peer_key] = {
+                host = apt.host,
+                port = apt.port
             }
         end
 
@@ -364,12 +361,12 @@ local function keepalive_peers(bindserv)
         _sync_port()
 
         local live_peers = {}
-        for k, peer in pairs(shared.peer_map) do
+        for apt, peer in pairs(shared.weak_apt_peer_map) do
             -- cleanup timeout peer
-            if utils.gettime() - peer.apt.last_incoming_time > config.peer_timeout then
-                peer.apt:cleanup()
+            if utils.gettime() - apt.last_incoming_time > config.peer_timeout then
+                apt:cleanup()
                 -- if config.debug then
-                print(utils.gettime(), k, "peer keepalive timeout.")
+                print(utils.gettime(), apt.peer_key, "peer keepalive timeout.")
                 -- end
                 for connkey, obj in pairs(peer.ppclient_connection_map) do
                     if obj.apt then
@@ -378,57 +375,42 @@ local function keepalive_peers(bindserv)
                     end
                 end
 
-                shared.peer_map[k] = nil
+                shared.clientkey_apt_map[apt.peer_key] = nil
+                shared.weak_apt_peer_map[apt] = nil
             else
-                live_peers[peer] = k
+                live_peers[apt] = apt.peer_key
 
                 -- keep alive peer
-                if utils.gettime() - peer.apt.last_outgoing_time > config.keepalive_delay then
-                    peer.apt:send_keepalive()
+                if utils.gettime() - apt.last_outgoing_time > config.keepalive_delay then
+                    apt:send_keepalive()
                 end
             end
         end
 
         -- cleanup peer's binding service
         for port, t in pairs(shared.bind_map) do
-            if not live_peers[t.peer] then
+            if not live_peers[t.tunnel_apt] then
                 t:unbind()
             end
         end
 
         for key, apt in pairs(bindserv.clientmap) do
-            local need_cleanup = false
-            if apt.peer_key then
-                local peer = shared.peer_map[apt.peer_key]
-                if peer and peer.apt ~= apt then
-                    -- cleanup on peer tunnel has been changed to another udp apt.
-                    need_cleanup = true
-                end
-            end
-
             -- ignore client to remote nat server
             if not need_cleanup and apt ~= shared.remote_serv then
                 -- cleanup timeout client.
                 local timeout = apt.latency and config.peer_timeout or config.none_peer_timeout
                 if utils.gettime() - apt.last_incoming_time > timeout then
-                    need_cleanup = true
-                    local peer = shared.weak_apt_peer_map[apt]
-                    if peer then
-                        for k,v in pairs(shared.peer_map) do
-                            if v == peer then
-                                shared.peer_map[k] = nil
-                                break
-                            end
-                        end
+                    apt:cleanup()
+
+                    if config.debug then
+                        print(utils.gettime(), key, "client has been cleaned up.")
+                    end
+                    shared.weak_apt_peer_map[apt] = nil
+
+                    if shared.clientkey_apt_map[apt.peer_key] == apt then
+                        shared.clientkey_apt_map[apt.peer_key] = nil
                     end
                 end
-            end
-
-            if need_cleanup then
-                apt:cleanup()
-                -- if config.debug then
-                print(utils.gettime(), key, "client has been cleaned up.")
-            -- end
             end
         end
 
@@ -436,7 +418,7 @@ local function keepalive_peers(bindserv)
     end
 end
 
-local function _flush_connection_map(peer, conn_key, map_key, flush_type, disconnect_type)
+local function _flush_connection_map(tunnel_apt, peer, conn_key, map_key, flush_type, disconnect_type)
     for connkey, obj in pairs(peer[map_key]) do
         if obj.incoming_count > 0 then
             -- flush data from buffer to endpoint connection in sequence.
@@ -475,7 +457,7 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
                 local auto_index = obj.auto_index
                 obj.auto_index = auto_index < config.auto_index_max and auto_index + 1 or 1
                 local forward_index =
-                    peer.apt:send_msg {
+                    tunnel_apt:send_msg {
                     type = flush_type,
                     connkey = connkey,
                     data = data,
@@ -484,26 +466,26 @@ local function _flush_connection_map(peer, conn_key, map_key, flush_type, discon
 
                 obj.outgoing_count = obj.outgoing_count + 1
 
-                if config.debug then
+                if config.debug_nat then
                     print(map_key, "forward", forward_index, auto_index)
                 end
-                peer.apt.index_conn_map[forward_index] = obj
+                tunnel_apt.index_conn_map[forward_index] = obj
             end
         elseif obj.need_send_disconnect and obj.outgoing_count == 0 then
             -- send disconnect command to remote peer until all data have been flushed to it.
             obj.need_send_disconnect = nil
             peer[map_key][connkey] = nil
-            peer.apt:send_msg {type = disconnect_type, connkey = connkey}
+            tunnel_apt:send_msg {type = disconnect_type, connkey = connkey}
         end
     end
 end
 
 local function sync_port_buffers(bindserv)
     while not bindserv.stop do
-        for ckey, peer in pairs(shared.peer_map) do
+        for apt, peer in pairs(shared.weak_apt_peer_map) do
             -- peer, conn_key, map_key, flush_type, disconnect_type
-            _flush_connection_map(peer, "conn", "ppservice_connection_map", "ppdata_resp", "ppdisconnectedmaster")
-            _flush_connection_map(peer, "apt", "ppclient_connection_map", "ppdata_req", "ppdisconnectedclient")
+            _flush_connection_map(apt, peer, "conn", "ppservice_connection_map", "ppdata_resp", "ppdisconnectedmaster")
+            _flush_connection_map(apt, peer, "apt", "ppclient_connection_map", "ppdata_req", "ppdisconnectedclient")
         end
 
         sync_port_running = coroutine.running()
@@ -526,9 +508,6 @@ local function bind_apt(apt)
 
     config.weaktable[string.format("bind_apt_%s:%d", apt.host, apt.port)] = apt
 
-    apt.last_incoming_time = utils.gettime()
-    apt.last_outgoing_time = utils.gettime()
-
     local host = apt.host
     local port = apt.port
 
@@ -541,11 +520,10 @@ local function bind_apt(apt)
 
         shared.allowed_map_touch(host, port)
 
-        if config.debug then
+        if config.debug_nat then
             print(os.date("%X"), host, port, cjson.encode(msg))
         end
 
-        apt.last_incoming_time = utils.gettime()
         if msg.clientkey then
             create_or_update_peer(apt, host, port, msg)
         end
@@ -575,11 +553,17 @@ local function bind_apt(apt)
         end
     end
 
-    apt.ontimeout = function(apt, package)
+    apt.ontimeout =
+        function(apt, package)
         local alive = shared.allowed_map_test(host, port)
         if not alive then
-            if config.debug then
-                print("not alive, drop", package.body and #(package.body) or (package.body_end - package.body_begin + 1), host, port)
+            if config.debug_nat then
+                print(
+                    "not alive, drop",
+                    package.body and #(package.body) or (package.body_end - package.body_begin + 1),
+                    host,
+                    port
+                )
             end
             -- drop dead client's packet.
             return false
@@ -628,10 +612,9 @@ function onStart()
 
     apt_mt.send_msg = function(apt, msg)
         msg.clientkey = clientkey
-        if config.debug then
+        if config.debug_nat then
             print(apt.host, apt.port, "send", cjson.encode(msg))
         end
-        apt.last_outgoing_time = utils.gettime()
         return apt:send(objectbuf.encode(msg, sym))
     end
 
@@ -673,7 +656,7 @@ function bind_service_mt:bind()
     end
 
     local port = self.port
-    local peer = self.peer
+    local peer = shared.weak_apt_peer_map[self.tunnel_apt]
 
     self.serv =
         tcpd.bind {
@@ -702,7 +685,7 @@ function bind_service_mt:bind()
 
             local weak_obj = utils.weakify_object(obj)
 
-            peer.apt:send_msg {
+            self.tunnel_apt:send_msg {
                 type = "ppconnect",
                 connkey = connkey,
                 host = self.remote_host,
@@ -729,7 +712,7 @@ function bind_service_mt:bind()
                     end
                 end,
                 ondisconnected = function(msg)
-                    if config.debug then
+                    if config.debug_nat then
                         print("client disconnected", msg)
                     end
 
@@ -782,9 +765,9 @@ function bind(params)
     end
 
     local list = {}
-    for k, v in pairs(shared.peer_map) do
-        if k:find(params.clientkey) == 1 then
-            table.insert(list, v)
+    for apt, peer in pairs(shared.weak_apt_peer_map) do
+        if apt.peer_key:find(params.clientkey) == 1 then
+            table.insert(list, apt)
         end
     end
 
@@ -795,16 +778,14 @@ function bind(params)
     table.sort(
         list,
         function(a, b)
-            return a.apt.last_incoming_time > b.apt.last_incoming_time
+            return a.last_incoming_time > b.last_incoming_time
         end
     )
-
-    local peer = list[1]
 
     local t
     t = {
         port = port,
-        peer = peer,
+        tunnel_apt = list[1],
         remote_host = params.remote_host,
         remote_port = params.remote_port
     }

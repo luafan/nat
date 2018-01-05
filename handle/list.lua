@@ -73,7 +73,7 @@ local function onGet(req, resp)
         top = fan.gettop(),
         reg_count = reg_count,
         bind_map_count = count_table_size(shared.bind_map),
-        peer_map_count = count_table_size(shared.peer_map),
+        peer_map_count = count_table_size(shared.weak_apt_peer_map),
         allowed_map_count = count_table_size(shared.allowed_map, 2),
         list = {}
     }
@@ -88,6 +88,8 @@ local function onGet(req, resp)
             last_keepalive = utils.gettime() - apt.last_incoming_time,
             output_wait_count = apt._output_wait_count,
             output_index = apt._output_index,
+            send_window = apt._send_window,
+            recv_window = apt._recv_window,
             latency = apt.latency,
             created = peer and os.date("%c", math.floor(peer.created)) or "N/A",
             incoming_bytes_total = string.format("%1.3f MB", apt.incoming_bytes_total / 1024.0 / 1024.0),

@@ -90,7 +90,7 @@ function onStart()
                 conn.last_keepalive = utils.gettime()
             end
 
-            print(apt.host, apt.port, cjson.encode(msg))
+            -- print(apt.host, apt.port, cjson.encode(msg))
             if msg.clientkey and not key_conn_map[msg.clientkey] then
                 key_conn_map[msg.clientkey] = conn
                 conn.clientkey = msg.clientkey
