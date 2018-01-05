@@ -115,7 +115,7 @@ function command_map.list(apt, host, port, msg)
                 apt:send_keepalive()
             end
 
-            if v.data and false then
+            if v.data then
                 for i, v in ipairs(v.data) do
                     if v.host and v.port then
                         local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
