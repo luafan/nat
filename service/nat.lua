@@ -101,7 +101,7 @@ function command_map.list(apt, host, port, msg)
         local clientkey = v.clientkey
         local apt = shared.clientkey_apt_map[clientkey]
         if true then
-                local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+            local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
             apt:send_keepalive()
 
             if v.internal_host and v.internal_port then
@@ -619,7 +619,7 @@ function onStart()
     end
 
     apt_mt.send_keepalive = function(apt)
-        if not next(apt._output_wait_package_parts_map) then
+        if not apt._output_chain._head then
             local output_index = apt:send_msg {type = "ppkeepalive"}
             apt.ppkeepalive_output_index_map[output_index] = true
         end
