@@ -100,7 +100,8 @@ function command_map.list(apt, host, port, msg)
         end
         local clientkey = v.clientkey
         local apt = shared.clientkey_apt_map[clientkey]
-        if true then
+        local peer = apt and shared.weak_apt_peer_map[apt] or nil
+        if not peer then
             local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
             apt:send_keepalive()
 
@@ -396,7 +397,7 @@ local function keepalive_peers(bindserv)
 
         for key, apt in pairs(bindserv.clientmap) do
             -- ignore client to remote nat server
-            if not need_cleanup and apt ~= shared.remote_serv then
+            if apt ~= shared.remote_serv then
                 -- cleanup timeout client.
                 local timeout = apt.latency and config.peer_timeout or config.none_peer_timeout
                 if utils.gettime() - apt.last_incoming_time > timeout then
