@@ -619,7 +619,7 @@ function onStart()
     end
 
     apt_mt.send_keepalive = function(apt)
-        if apt._output_wait_count <= 5 then
+        if not next(apt._output_wait_package_parts_map) then
             local output_index = apt:send_msg {type = "ppkeepalive"}
             apt.ppkeepalive_output_index_map[output_index] = true
         end
