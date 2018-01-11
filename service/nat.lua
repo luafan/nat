@@ -620,7 +620,7 @@ function onStart()
     end
 
     apt_mt.send_keepalive = function(apt)
-        if not apt._output_chain._head then
+        if apt._output_chain.size < 10 then
             local output_index = apt:send_msg {type = "ppkeepalive"}
             apt.ppkeepalive_output_index_map[output_index] = true
         end
