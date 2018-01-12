@@ -382,7 +382,7 @@ local function keepalive_peers(bindserv)
                 live_peers[apt] = apt.peer_key
 
                 -- keep alive peer
-                if utils.gettime() - apt.last_outgoing_time > config.keepalive_delay then
+                if utils.gettime() - apt.last_keepalive > config.keepalive_delay then
                     apt:send_keepalive()
                 end
             end
@@ -504,6 +504,7 @@ end
 
 local function bind_apt(apt)
     apt.ppkeepalive_output_index_map = {}
+    apt.last_keepalive = utils.gettime()
     apt.index_conn_map = {}
     setmetatable(apt.index_conn_map, {__mode = "v"})
 
@@ -621,6 +622,7 @@ function onStart()
 
     apt_mt.send_keepalive = function(apt)
         if apt._output_chain.size < 10 then
+            apt.last_keepalive = utils.gettime()
             local output_index = apt:send_msg {type = "ppkeepalive"}
             apt.ppkeepalive_output_index_map[output_index] = true
         end
