@@ -396,21 +396,19 @@ local function keepalive_peers(bindserv)
         end
 
         for key, apt in pairs(bindserv.clientmap) do
-            -- ignore client to remote nat server
-            if apt ~= shared.remote_serv then
-                -- cleanup timeout client.
-                local timeout = apt.latency and config.peer_timeout or config.none_peer_timeout
-                if utils.gettime() - apt.last_incoming_time > timeout then
-                    apt:cleanup()
+            -- cleanup timeout client.
+            local timeout = apt.latency and config.peer_timeout or config.none_peer_timeout
+            if utils.gettime() - apt.last_incoming_time > timeout then
+                apt:cleanup()
 
-                    if config.debug then
-                        print(utils.gettime(), key, "client has been cleaned up.")
-                    end
-                    shared.weak_apt_peer_map[apt] = nil
+                if config.debug then
+                    print(utils.gettime(), key, "client has been cleaned up.")
+                end
+                shared.weak_apt_peer_map[apt] = nil
 
-                    if shared.clientkey_apt_map[apt.peer_key] == apt then
-                        shared.clientkey_apt_map[apt.peer_key] = nil
-                    end
+                -- ignore client to remote nat server
+                if apt.peer_key and shared.clientkey_apt_map[apt.peer_key] == apt then
+                    shared.clientkey_apt_map[apt.peer_key] = nil
                 end
             end
         end
