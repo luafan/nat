@@ -19,3 +19,5 @@ auto_index_max = tonumber(os.getenv("AUTO_INDEX_MAX") or 65535)
 outgoing_count_max = tonumber(os.getenv("OUTGOING_MAX") or 10)
 
 drop_package_outside_window = os.getenv("DROP_PACKAGE_OUTSIDE_WINDOW") == "true"
+
+session_cache = {}

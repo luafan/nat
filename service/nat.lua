@@ -349,10 +349,20 @@ local function list_peers(bindserv)
             end
         end
 
-        shared.remote_serv:send_msg {
-            type = "list",
-            data = data
-        }
+        local remote_serv =
+            shared.bindserv.getapt(
+            config.remote_host,
+            config.remote_port,
+            nil,
+            string.format("%s:%d", config.remote_host, config.remote_port)
+        )
+
+        if remote_serv._output_chain.size < 10 then
+            remote_serv:send_msg {
+                type = "list",
+                data = data
+            }
+        end
         fan.sleep(3)
     end
 end
@@ -602,7 +612,7 @@ function onStart()
     end
 
     shared.bindserv = connector.bind("udp://0.0.0.0:0")
-    shared.remote_serv =
+    local remote_serv =
         shared.bindserv.getapt(
         config.remote_host,
         config.remote_port,
@@ -610,7 +620,7 @@ function onStart()
         string.format("%s:%d", config.remote_host, config.remote_port)
     )
 
-    local apt_mt = getmetatable(shared.remote_serv)
+    local apt_mt = getmetatable(remote_serv)
 
     apt_mt.send_msg = function(apt, msg)
         msg.clientkey = clientkey
@@ -628,7 +638,7 @@ function onStart()
         end
     end
 
-    bind_apt(shared.remote_serv)
+    bind_apt(remote_serv)
 
     shared.bindserv.onaccept = function(apt)
         bind_apt(apt)
