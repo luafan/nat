@@ -22,6 +22,7 @@
       $("#udp_send_total").text("udp_send_total: " + item.udp_send_total);
       $("#udp_receive_total").text("udp_receive_total: " + item.udp_receive_total);
       $("#udp_resend_total").text("udp_resend_total: " + item.udp_resend_total);
+      $("#udp_drop_total").text("udp_drop_total: " + item.udp_drop_total);
       $("#latency").text("latency: " + item.latency);
       $("#last_keepalive").text("keepalive: " + item.last_keepalive);
       $("#output_chain").text("output_chain: " + item.output_chain_count);
@@ -148,6 +149,7 @@
             <label name="udp_send_total" id="udp_send_total"></label>
             <label name="udp_receive_total" id="udp_receive_total"></label>
             <label name="udp_resend_total" id="udp_resend_total"></label>
+            <label name="udp_drop_total" id="udp_drop_total"></label>
             <label name="latency" id="latency"></label>
             <label name="last_keepalive" id="last_keepalive"></label>
             <label name="output_chain" id="output_chain"></label>
