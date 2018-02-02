@@ -1,4 +1,4 @@
-FROM luafan/webase
+FROM luafan/webase:stable
 
 ENV REMOTE_HOST 127.0.0.1
 ENV REMOTE_PORT 10000
