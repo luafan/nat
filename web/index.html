@@ -26,11 +26,12 @@
       $("#latency").text("latency: " + item.latency);
       $("#last_keepalive").text("keepalive: " + item.last_keepalive);
       $("#output_chain").text("output_chain: " + item.output_chain_count);
+      $("#suspend_chain").text("suspend_chain: " + item.suspend_chain_count);
       $("#output_wait").text("output_wait: " + item.output_wait_count);
       $("#output_wait_ack").text("output_wait_ack: " + item.output_wait_ack_count);
       $("#recv_window").text("recv_window: " + item.recv_window);
       $("#send_window").text("send_window: " + item.send_window);
-      $("#output_wait_index_map").text("output_wait_index_map: " + item.output_wait_index_map_count);
+      $("#output_package_parts_map").text("output_package_parts_map: " + item.output_package_parts_map_count);
       $("#incoming_bytes_total").text("incoming_bytes_total: " + item.incoming_bytes_total);
       $("#outgoing_bytes_total").text("outgoing_bytes_total: " + item.outgoing_bytes_total);
       $("#peer_created").text("created: " + item.created);
@@ -82,7 +83,7 @@
                     " Send: " + response.udp_send_total +
                     " Receive: " + response.udp_receive_total +
                     " ReSend: " + response.udp_resend_total +
-                    " Top: " + response.top +
+                    " Chain: " + response.output_chain_count +
                     " Reg: " + response.reg_count +
                     " BindMap: " + response.bind_map_count +
                     " PeerMap: " + response.peer_map_count +
@@ -153,11 +154,12 @@
             <label name="latency" id="latency"></label>
             <label name="last_keepalive" id="last_keepalive"></label>
             <label name="output_chain" id="output_chain"></label>
+            <label name="suspend_chain" id="suspend_chain"></label>
             <label name="output_wait" id="output_wait"></label>
             <label name="output_wait_ack" id="output_wait_ack"></label>
             <label name="recv_window" id="recv_window"></label>
             <label name="send_window" id="send_window"></label>
-            <label name="output_wait_index_map" id="output_wait_index_map"></label>
+            <label name="output_package_parts_map" id="output_package_parts_map"></label>
             <label name="incoming_bytes_total" id="incoming_bytes_total"></label>
             <label name="outgoing_bytes_total" id="outgoing_bytes_total"></label>
             <label name="peer_created" id="peer_created"></label>

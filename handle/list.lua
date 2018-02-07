@@ -75,6 +75,7 @@ local function onGet(req, resp)
         bind_map_count = count_table_size(shared.bind_map),
         peer_map_count = count_table_size(shared.weak_apt_peer_map),
         allowed_map_count = count_table_size(shared.allowed_map, 2),
+        output_chain_count = count_chain_size(shared.bindserv._main_output_chain),
         list = {}
     }
 
@@ -84,9 +85,8 @@ local function onGet(req, resp)
         local peer = shared.weak_apt_peer_map[apt]
         local item = {
             key = key,
-            clientkey = peer and peer.clientkey or "N/A",
+            clientkey = peer and apt.peer_key,
             last_keepalive = utils.gettime() - apt.last_incoming_time,
-            output_wait_count = apt._output_wait_count,
             output_index = apt._output_index,
             send_window = apt._send_window,
             recv_window = apt._recv_window,
@@ -99,10 +99,12 @@ local function onGet(req, resp)
             created = peer and os.date("%c", math.floor(peer.created)) or "N/A",
             incoming_bytes_total = string.format("%1.3f MB", apt.incoming_bytes_total / 1024.0 / 1024.0),
             outgoing_bytes_total = string.format("%1.3f MB", apt.outgoing_bytes_total / 1024.0 / 1024.0),
+            output_wait_count = apt._output_wait_count,
             output_wait_ack_count = count_table_size(apt._output_wait_ack),
-            output_wait_index_map_count = count_table_size(apt._output_wait_package_parts_map),
+            output_package_parts_map_count = count_table_size(apt._output_package_parts_map),
             incoming_map_count = count_table_size(apt._incoming_map, 2),
-            output_chain_count = count_chain_size(apt._output_chain),
+            output_chain_count = apt.output_chain_count,
+            suspend_chain_count = count_chain_size(apt._suspend_chain),
             ppclient_connection_count = peer and count_table_size(peer.ppclient_connection_map) or "N/A",
             ppservice_connection_count = peer and count_table_size(peer.ppservice_connection_map) or "N/A",
             incoming = {},

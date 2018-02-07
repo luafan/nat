@@ -100,9 +100,17 @@ function command_map.list(apt, host, port, msg)
         end
         local clientkey = v.clientkey
         local apt = shared.clientkey_apt_map[clientkey]
+        if apt then
+            apt.peer_key = clientkey
+        end
         local peer = apt and shared.weak_apt_peer_map[apt] or nil
-        if not peer then
+        if peer then
+            if not apt.sent_keepalive then
+                apt:send_keepalive()
+            end
+        else
             local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+            apt.peer_key = clientkey
             apt:send_keepalive()
 
             if v.internal_host and v.internal_port then
@@ -113,6 +121,7 @@ function command_map.list(apt, host, port, msg)
                     nil,
                     string.format("%s:%d", v.internal_host, v.internal_port)
                 )
+                apt.peer_key = clientkey
                 apt:send_keepalive()
             end
 
@@ -120,6 +129,7 @@ function command_map.list(apt, host, port, msg)
                 for i, v in ipairs(v.data) do
                     if v.host and v.port then
                         local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+                        apt.peer_key = clientkey
                         apt:send_keepalive()
                     end
                 end
@@ -313,13 +323,13 @@ local function create_or_update_peer(apt, host, port, msg)
             ppservice_connection_map = {},
             ppclient_connection_map = {}
         }
-
         config.weaktable[string.format("peer_%s_%s", msg.clientkey, peer)] = peer
     else
         peer.host = host
         peer.port = port
     end
 
+    apt.connected = true
     apt.peer_key = msg.clientkey
 
     shared.clientkey_apt_map[msg.clientkey] = apt
@@ -330,6 +340,9 @@ local function list_peers(bindserv)
     while not bindserv.stop do
         local data = {}
         for apt, peer in pairs(shared.weak_apt_peer_map) do
+            if not apt.peer_key then
+                print(apt.host, apt.port)
+            end
             data[apt.peer_key] = {
                 host = apt.host,
                 port = apt.port
@@ -357,7 +370,10 @@ local function list_peers(bindserv)
             string.format("%s:%d", config.remote_host, config.remote_port)
         )
 
-        if remote_serv._output_chain.size < 10 then
+        remote_serv.peer_key = "<server>"
+        remote_serv.connected = true
+
+        if remote_serv.output_chain_count < 10 then
             remote_serv:send_msg {
                 type = "list",
                 data = data
@@ -407,16 +423,15 @@ local function keepalive_peers(bindserv)
 
         for key, apt in pairs(bindserv.clientmap) do
             -- cleanup timeout client.
-            local timeout = apt.peer_key and config.peer_timeout or config.none_peer_timeout
+            local timeout = apt.connected and config.peer_timeout or config.none_peer_timeout
             if utils.gettime() - apt.last_incoming_time > timeout then
                 shared.weak_apt_peer_map[apt] = nil
 
-                -- ignore client to remote nat server
                 if apt.peer_key and shared.clientkey_apt_map[apt.peer_key] == apt then
                     shared.clientkey_apt_map[apt.peer_key] = nil
                 end
 
-                apt.peer_key = nil
+                apt.connected = nil
                 apt:cleanup()
 
                 if config.debug then
@@ -562,6 +577,7 @@ local function bind_apt(apt)
             _sync_port()
         elseif apt.ppkeepalive_output_index_map[package.output_index] then
             apt.ppkeepalive_output_index_map[package.output_index] = nil
+            apt.sent_keepalive = true
         end
     end
 
@@ -620,6 +636,9 @@ function onStart()
         string.format("%s:%d", config.remote_host, config.remote_port)
     )
 
+    remote_serv.peer_key = "<server>"
+    remote_serv.connected = true
+
     local apt_mt = getmetatable(remote_serv)
 
     apt_mt.send_msg = function(apt, msg)
@@ -631,7 +650,7 @@ function onStart()
     end
 
     apt_mt.send_keepalive = function(apt)
-        if apt._output_chain.size < 10 then
+        if apt.output_chain_count < 10 then
             apt.last_keepalive = utils.gettime()
             local output_index = apt:send_msg {type = "ppkeepalive"}
             apt.ppkeepalive_output_index_map[output_index] = true
