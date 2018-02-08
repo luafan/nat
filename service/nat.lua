@@ -66,6 +66,7 @@ local sync_port_running = nil
 
 local command_map = {}
 
+math.randomseed(utils.gettime() * 10000)
 local clientkey = string.format("%s-%s", config.name, utils.random_string(utils.LETTERS_W, 8))
 
 local function _sync_port()
@@ -100,7 +101,7 @@ function command_map.list(apt, host, port, msg)
         end
         local clientkey = v.clientkey
         local apt = shared.clientkey_apt_map[clientkey]
-        if apt then
+        if apt and clientkey then
             apt.peer_key = clientkey
         end
         local peer = apt and shared.weak_apt_peer_map[apt] or nil
@@ -340,13 +341,12 @@ local function list_peers(bindserv)
     while not bindserv.stop do
         local data = {}
         for apt, peer in pairs(shared.weak_apt_peer_map) do
-            if not apt.peer_key then
-                print(apt.host, apt.port)
+            if apt.peer_key then
+                data[apt.peer_key] = {
+                    host = apt.host,
+                    port = apt.port
+                }
             end
-            data[apt.peer_key] = {
-                host = apt.host,
-                port = apt.port
-            }
         end
 
         if shared.internal_port and fan.getinterfaces then

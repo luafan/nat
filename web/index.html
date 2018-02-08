@@ -26,7 +26,7 @@
       $("#latency").text("latency: " + item.latency);
       $("#last_keepalive").text("keepalive: " + item.last_keepalive);
       $("#output_chain").text("output_chain: " + item.output_chain_count);
-      $("#suspend_chain").text("suspend_chain: " + item.suspend_chain_count);
+      $("#suspend_list").text("suspend_list: " + item.suspend_list_count);
       $("#output_wait").text("output_wait: " + item.output_wait_count);
       $("#output_wait_ack").text("output_wait_ack: " + item.output_wait_ack_count);
       $("#recv_window").text("recv_window: " + item.recv_window);
@@ -154,7 +154,7 @@
             <label name="latency" id="latency"></label>
             <label name="last_keepalive" id="last_keepalive"></label>
             <label name="output_chain" id="output_chain"></label>
-            <label name="suspend_chain" id="suspend_chain"></label>
+            <label name="suspend_list" id="suspend_list"></label>
             <label name="output_wait" id="output_wait"></label>
             <label name="output_wait_ack" id="output_wait_ack"></label>
             <label name="recv_window" id="recv_window"></label>

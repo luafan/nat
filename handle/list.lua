@@ -104,7 +104,7 @@ local function onGet(req, resp)
             output_package_parts_map_count = count_table_size(apt._output_package_parts_map),
             incoming_map_count = count_table_size(apt._incoming_map, 2),
             output_chain_count = apt.output_chain_count,
-            suspend_chain_count = count_chain_size(apt._suspend_chain),
+            suspend_list_count = #(apt._suspend_list),
             ppclient_connection_count = peer and count_table_size(peer.ppclient_connection_map) or "N/A",
             ppservice_connection_count = peer and count_table_size(peer.ppservice_connection_map) or "N/A",
             incoming = {},
