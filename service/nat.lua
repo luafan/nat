@@ -17,6 +17,38 @@ local objectbuf = require "fan.objectbuf"
 local utils = require "fan.utils"
 local upnp = require "fan.upnp"
 
+local openssl = require "openssl"
+local base64 = require "base64"
+local pkey = openssl.pkey
+local pubkey = nil
+local privkey = nil
+
+local f = io.open("id_rsa", "rb")
+if f then
+    local data = f:read("*all")
+    f:close()
+    privkey = pkey.read(data, true)
+else
+    privkey = pkey.new("rsa", 2048)
+
+    local f = io.open("id_rsa", "wb")
+    f:write(privkey:export())
+    f:close()
+end
+
+local data_map = {}
+local f = io.open("data.buf", "rb")
+if f then
+    local data = f:read("*all")
+    f:close()
+
+    data_map = objectbuf.decode(data)
+end
+
+pubkey = pkey.get_public(privkey)
+
+local publickey = pubkey:export("der")
+
 local cjson = require "cjson"
 require "compat53"
 
@@ -66,13 +98,34 @@ local sync_port_running = nil
 
 local command_map = {}
 
-math.randomseed(utils.gettime() * 10000)
+math.randomseed((utils.gettime() + os.clock()) * 10000)
+
 local clientkey = string.format("%s-%s", config.name, utils.random_string(utils.LETTERS_W, 8))
 
 local function _sync_port()
     if sync_port_running then
         assert(coroutine.resume(sync_port_running))
     end
+end
+
+function command_map.register(apt, host, port, msg)
+    if msg.publickey then
+        local publickey = privkey:open(table.unpack(msg.publickey))
+
+        data_map.publickey = publickey
+        data_map.uid = privkey:open(table.unpack(msg.uid))
+        
+        local data = objectbuf.encode(data_map)
+        local f = io.open("data.buf", "wb")
+        f:write(data)
+        f:close()
+    end
+
+    if data_map.publickey then
+        apt.pubkey = pkey.read(data_map.publickey)
+    end
+
+    apt.privkey = privkey
 end
 
 function command_map.list(apt, host, port, msg)
@@ -374,11 +427,28 @@ local function list_peers(bindserv)
         remote_serv.connected = true
 
         if remote_serv.output_chain_count < 10 then
-            remote_serv:send_msg {
-                type = "list",
-                data = data
-            }
+            if remote_serv.pubkey then
+                remote_serv:send_msg {
+                    type = "list",
+                    data = data
+                }
+            else
+                if data_map.uid and data_map.publickey then
+                    local server_pubkey = pkey.read(data_map.publickey)
+                    remote_serv:send_msg {
+                        type = "register",
+                        uid = data_map.uid,
+                        challenge = server_pubkey:encrypt(string.format("%s", os.time()))
+                    }            
+                else
+                    remote_serv:send_msg {
+                        type = "register",
+                        publickey = publickey,
+                    }
+                end        
+            end
         end
+
         fan.sleep(3)
     end
 end
@@ -540,6 +610,15 @@ local function bind_apt(apt)
 
     apt.onread = function(apt, body)
         local msg = objectbuf.decode(body, sym)
+
+        if not msg.type and apt.privkey then
+            local edata = apt.privkey:open(table.unpack(msg))
+            if not edata then
+                return
+            end
+            msg = objectbuf.decode(edata, sym)
+        end
+
         if not msg then
             print("decode failed.", host, port, #(body))
             return
@@ -646,7 +725,14 @@ function onStart()
         if config.debug_nat then
             print(apt.host, apt.port, "send", cjson.encode(msg))
         end
-        return apt:send(objectbuf.encode(msg, sym))
+
+        if apt.pubkey then
+            local data = objectbuf.encode(msg, sym)
+            local edata = objectbuf.encode({apt.pubkey:seal(data)}, sym)
+            return apt:send(edata)
+        else
+            return apt:send(objectbuf.encode(msg, sym))
+        end
     end
 
     apt_mt.send_keepalive = function(apt)
