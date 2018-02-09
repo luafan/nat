@@ -24,3 +24,4 @@ COPY web /root/web
 COPY handle /root/handle
 COPY service /root/service
 COPY mapping /root/mapping
+COPY database /root/database
