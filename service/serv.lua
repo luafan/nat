@@ -199,7 +199,7 @@ function onStart()
             while serv do
                 for publickey, apt in pairs(key_conn_map) do
                     if utils.gettime() - apt.last_keepalive > 30 then
-                        print(k.dest, "keepalive timeout.")
+                        print(apt.dest, "keepalive timeout.")
                         apt:cleanup()
 
                         key_conn_map[publickey] = nil
