@@ -16,7 +16,6 @@ local ctxpool = require "ctxpool"
 
 local sym = objectbuf.symbol(require "nat_dic")
 
-local conn_map = {}
 local key_conn_map = {}
 
 local command_map = {}
@@ -37,6 +36,7 @@ local function create_user(ctx, publickey)
     end
 
     m.pubkey = pkey.read(publickey)
+    m.publickey = publickey
 
     return m
 end
@@ -44,8 +44,9 @@ end
 local function get_keys(ctx, uid)
     local m = ctx.user("one", "where id=?", uid)
     if m then
+        m.publickey = base64.decode(m.client_publickey)
         m.privkey = pkey.read(base64.decode(m.server_privatekey), true)
-        m.pubkey = pkey.read(base64.decode(m.client_publickey))
+        m.pubkey = pkey.read(m.publickey)
         
         return m
     end
@@ -72,12 +73,14 @@ function command_map.register(apt, msg)
         }, true)
         apt.pubkey = m.pubkey
         apt.privkey = m.privkey
+        apt.publickey = m.publickey
     elseif msg.challenge and msg.uid then
         local m = ctxpool:safe(get_keys, msg.uid)
         local data = m.privkey:decrypt(msg.challenge)
         if data and math.abs(tonumber(data) - os.time()) < 60 then
             apt.pubkey = m.pubkey
             apt.privkey = m.privkey
+            apt.publickey = m.publickey
             apt_send_msg(apt, {
                 type = msg.type
             }, true)
@@ -86,11 +89,10 @@ function command_map.register(apt, msg)
 end
 
 function command_map.list(apt, msg)
-    local conn = conn_map[apt]
     if msg.internal_host and msg.internal_port then
-        conn.internal_host = msg.internal_host
-        conn.internal_port = msg.internal_port
-        conn.internal_netmask = msg.internal_netmask
+        apt.internal_host = msg.internal_host
+        apt.internal_port = msg.internal_port
+        apt.internal_netmask = msg.internal_netmask
     end
     if msg.data then
         for k, v in pairs(msg.data) do
@@ -104,36 +106,37 @@ function command_map.list(apt, msg)
     local t = {}
     local current_time = utils.gettime()
 
-    for k, v in pairs(conn_map) do
-        if k ~= apt then
+    for publickey, _apt in pairs(key_conn_map) do
+        if _apt ~= apt and _apt.publickey then
             local data = {}
 
-            if k.host == "103.250.195.161" then
-                local t = {host = "203.156.209.194", port = k.port}
-                v.data[string.format("%s:%d", t.host, t.port)] = t
-            elseif k.host == "203.156.209.194" then
-                local t = {host = "103.250.195.161", port = k.port}
-                v.data[string.format("%s:%d", t.host, t.port)] = t
+            if _apt.host == "103.250.195.161" then
+                local t = {host = "203.156.209.194", port = _apt.port}
+                _apt.data[string.format("%s:%d", t.host, t.port)] = t
+            elseif _apt.host == "203.156.209.194" then
+                local t = {host = "103.250.195.161", port = _apt.port}
+                _apt.data[string.format("%s:%d", t.host, t.port)] = t
             end
 
-            v.data[string.format("%s:%d", k.host, k.port)] = nil
+            _apt.data[string.format("%s:%d", _apt.host, _apt.port)] = nil
 
-            for k, v in pairs(v.data) do
+            for k, v in pairs(_apt.data) do
                 table.insert(data, v)
             end
 
             local obj = {
-                host = k.host,
-                port = k.port,
-                clientkey = v.clientkey,
+                host = _apt.host,
+                port = _apt.port,
+                publickey = _apt.publickey,
+                clientkey = _apt.clientkey,
                 data = data
             }
 
-            if apt.host == k.host then
+            if apt.host == _apt.host then
                 -- if two peers come from same ip
-                if v.internal_host and v.internal_port then
-                    obj.internal_host = v.internal_host
-                    obj.internal_port = v.internal_port
+                if _apt.internal_host and _apt.internal_port then
+                    obj.internal_host = _apt.internal_host
+                    obj.internal_port = _apt.internal_port
                 end
             end
 
@@ -168,23 +171,25 @@ function onStart()
                 return
             end
 
-            local conn = conn_map[apt]
-            if not conn then
-                conn = {last_keepalive = utils.gettime(), data = {}}
-                conn_map[apt] = conn
-            else
-                conn.last_keepalive = utils.gettime()
+            if msg.clientkey then
+                apt.clientkey = msg.clientkey
             end
 
-            print(apt.host, apt.port, cjson.encode(msg))
-            if msg.clientkey and not key_conn_map[msg.clientkey] then
-                key_conn_map[msg.clientkey] = conn
-                conn.clientkey = msg.clientkey
+            apt.last_keepalive = utils.gettime()
+
+            if not apt.data then
+                apt.data = {}
             end
+
+            -- print(apt.host, apt.port, cjson.encode(msg))
 
             local command = command_map[msg.type]
             if command then
                 command(apt, msg)
+            end
+
+            if apt.publickey and not key_conn_map[apt.publickey] then
+                key_conn_map[apt.publickey] = apt
             end
         end
     end
@@ -192,14 +197,12 @@ function onStart()
     coroutine.wrap(
         function()
             while serv do
-                for k, v in pairs(conn_map) do
-                    if utils.gettime() - v.last_keepalive > 30 then
+                for publickey, apt in pairs(key_conn_map) do
+                    if utils.gettime() - apt.last_keepalive > 30 then
                         print(k.dest, "keepalive timeout.")
-                        k:cleanup()
-                        if v.clientkey then
-                            key_conn_map[v.clientkey] = nil
-                        end
-                        conn_map[k] = nil
+                        apt:cleanup()
+
+                        key_conn_map[publickey] = nil
                     end
                 end
 
