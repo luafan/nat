@@ -27,7 +27,7 @@ local publickey = nil
 
 local AES128 = cipher.get("aes-128-ctr")
 
-local data_path = "data.buf"
+local data_path = config.data_path or "data.buf"
 local data_map = {}
 
 local function save_data_map()
@@ -147,7 +147,6 @@ function command_map.register(apt, host, port, msg)
 end
 
 function command_map.ppkeepalive(apt, host, port, msg)
-    print(host, port, cjson.encode(msg))
     apt.incoming_key = msg.key
 end
 
@@ -186,8 +185,7 @@ function command_map.list(apt, host, port, msg)
         local pubkey = pkey.read(v.publickey)
         local clientkey = v.clientkey
         local apt = shared.clientkey_apt_map[clientkey]
-        if apt and clientkey then
-            apt.peer_key = clientkey
+        if apt then
             apt.pubkey = pubkey
         end
         local peer = apt and shared.weak_apt_peer_map[apt] or nil
@@ -433,6 +431,10 @@ local function list_peers(bindserv)
             for i, v in ipairs(fan.getinterfaces()) do
                 if v.type == "inet" then
                     if v.host ~= "127.0.0.1" then
+                        data.internal_host = v.host
+                        data.internal_port = shared.internal_port
+                        data.internal_netmask = shared.internal_netmask
+                        
                         data[clientkey] = {
                             host = v.host,
                             port = shared.internal_port
@@ -651,6 +653,9 @@ local function bind_apt(apt)
                 return
             end
             msg = objectbuf.decode(edata, sym)
+        elseif msg.type ~= "register" then
+            -- disable none-encrypted message except "register" message.
+            return
         end
 
         if not msg or not msg.type then

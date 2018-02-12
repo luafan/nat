@@ -17,6 +17,7 @@ local ctxpool = require "ctxpool"
 local sym = objectbuf.symbol(require "nat_dic")
 
 local key_conn_map = {}
+local clientkey_conn_map = {}
 
 local command_map = {}
 local serv = nil
@@ -120,9 +121,9 @@ function command_map.list(apt, msg)
     end
     if msg.data then
         for k, v in pairs(msg.data) do
-            local c = key_conn_map[k]
-            if c then
-                c.data[string.format("%s:%d", v.host, v.port)] = v
+            local apt = clientkey_conn_map[k]
+            if apt then
+                apt.data[string.format("%s:%d", v.host, v.port)] = v
             end
         end
     end
@@ -205,8 +206,6 @@ function onStart()
                 apt.data = {}
             end
 
-            -- print(apt.host, apt.port, cjson.encode(msg))
-
             local command = command_map[msg.type]
             if command then
                 command(apt, msg)
@@ -214,6 +213,7 @@ function onStart()
 
             if apt.publickey and not key_conn_map[apt.publickey] then
                 key_conn_map[apt.publickey] = apt
+                clientkey_conn_map[apt.clientkey] = apt
             end
         end
     end
@@ -224,6 +224,7 @@ function onStart()
                 for publickey, apt in pairs(key_conn_map) do
                     if utils.gettime() - apt.last_keepalive > 30 then
                         print(apt.dest, "keepalive timeout.")
+                        clientkey_conn_map[apt.clientkey] = nil
                         apt:cleanup()
 
                         key_conn_map[publickey] = nil
