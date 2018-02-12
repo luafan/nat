@@ -17,6 +17,38 @@ local objectbuf = require "fan.objectbuf"
 local utils = require "fan.utils"
 local upnp = require "fan.upnp"
 
+local openssl = require "openssl"
+local base64 = require "base64"
+local pkey = openssl.pkey
+local pubkey = nil
+local privkey = nil
+
+local f = io.open("id_rsa", "rb")
+if f then
+    local data = f:read("*all")
+    f:close()
+    privkey = pkey.read(data, true)
+else
+    privkey = pkey.new("rsa", 2048)
+
+    local f = io.open("id_rsa", "wb")
+    f:write(privkey:export())
+    f:close()
+end
+
+local data_map = {}
+local f = io.open("data.buf", "rb")
+if f then
+    local data = f:read("*all")
+    f:close()
+
+    data_map = objectbuf.decode(data)
+end
+
+pubkey = pkey.get_public(privkey)
+
+local publickey = pubkey:export("der")
+
 local cjson = require "cjson"
 require "compat53"
 
@@ -66,12 +98,34 @@ local sync_port_running = nil
 
 local command_map = {}
 
+math.randomseed((utils.gettime() + os.clock()) * 10000)
+
 local clientkey = string.format("%s-%s", config.name, utils.random_string(utils.LETTERS_W, 8))
 
 local function _sync_port()
     if sync_port_running then
         assert(coroutine.resume(sync_port_running))
     end
+end
+
+function command_map.register(apt, host, port, msg)
+    if msg.publickey then
+        local publickey = privkey:open(table.unpack(msg.publickey))
+
+        data_map.publickey = publickey
+        data_map.uid = privkey:open(table.unpack(msg.uid))
+        
+        local data = objectbuf.encode(data_map)
+        local f = io.open("data.buf", "wb")
+        f:write(data)
+        f:close()
+    end
+
+    if data_map.publickey then
+        apt.pubkey = pkey.read(data_map.publickey)
+    end
+
+    apt.privkey = privkey
 end
 
 function command_map.list(apt, host, port, msg)
@@ -100,9 +154,17 @@ function command_map.list(apt, host, port, msg)
         end
         local clientkey = v.clientkey
         local apt = shared.clientkey_apt_map[clientkey]
+        if apt and clientkey then
+            apt.peer_key = clientkey
+        end
         local peer = apt and shared.weak_apt_peer_map[apt] or nil
-        if not peer then
+        if peer then
+            if not apt.sent_keepalive then
+                apt:send_keepalive()
+            end
+        else
             local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+            apt.peer_key = clientkey
             apt:send_keepalive()
 
             if v.internal_host and v.internal_port then
@@ -113,6 +175,7 @@ function command_map.list(apt, host, port, msg)
                     nil,
                     string.format("%s:%d", v.internal_host, v.internal_port)
                 )
+                apt.peer_key = clientkey
                 apt:send_keepalive()
             end
 
@@ -120,6 +183,7 @@ function command_map.list(apt, host, port, msg)
                 for i, v in ipairs(v.data) do
                     if v.host and v.port then
                         local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+                        apt.peer_key = clientkey
                         apt:send_keepalive()
                     end
                 end
@@ -313,13 +377,13 @@ local function create_or_update_peer(apt, host, port, msg)
             ppservice_connection_map = {},
             ppclient_connection_map = {}
         }
-
         config.weaktable[string.format("peer_%s_%s", msg.clientkey, peer)] = peer
     else
         peer.host = host
         peer.port = port
     end
 
+    apt.connected = true
     apt.peer_key = msg.clientkey
 
     shared.clientkey_apt_map[msg.clientkey] = apt
@@ -330,10 +394,12 @@ local function list_peers(bindserv)
     while not bindserv.stop do
         local data = {}
         for apt, peer in pairs(shared.weak_apt_peer_map) do
-            data[apt.peer_key] = {
-                host = apt.host,
-                port = apt.port
-            }
+            if apt.peer_key then
+                data[apt.peer_key] = {
+                    host = apt.host,
+                    port = apt.port
+                }
+            end
         end
 
         if shared.internal_port and fan.getinterfaces then
@@ -357,12 +423,32 @@ local function list_peers(bindserv)
             string.format("%s:%d", config.remote_host, config.remote_port)
         )
 
-        if remote_serv._output_chain.size < 10 then
-            remote_serv:send_msg {
-                type = "list",
-                data = data
-            }
+        remote_serv.peer_key = "<server>"
+        remote_serv.connected = true
+
+        if remote_serv.output_chain_count < 10 then
+            if remote_serv.pubkey then
+                remote_serv:send_msg {
+                    type = "list",
+                    data = data
+                }
+            else
+                if data_map.uid and data_map.publickey then
+                    local server_pubkey = pkey.read(data_map.publickey)
+                    remote_serv:send_msg {
+                        type = "register",
+                        uid = data_map.uid,
+                        challenge = server_pubkey:encrypt(string.format("%s", os.time()))
+                    }            
+                else
+                    remote_serv:send_msg {
+                        type = "register",
+                        publickey = publickey,
+                    }
+                end        
+            end
         end
+
         fan.sleep(3)
     end
 end
@@ -407,16 +493,15 @@ local function keepalive_peers(bindserv)
 
         for key, apt in pairs(bindserv.clientmap) do
             -- cleanup timeout client.
-            local timeout = apt.peer_key and config.peer_timeout or config.none_peer_timeout
+            local timeout = apt.connected and config.peer_timeout or config.none_peer_timeout
             if utils.gettime() - apt.last_incoming_time > timeout then
                 shared.weak_apt_peer_map[apt] = nil
 
-                -- ignore client to remote nat server
                 if apt.peer_key and shared.clientkey_apt_map[apt.peer_key] == apt then
                     shared.clientkey_apt_map[apt.peer_key] = nil
                 end
 
-                apt.peer_key = nil
+                apt.connected = nil
                 apt:cleanup()
 
                 if config.debug then
@@ -525,6 +610,15 @@ local function bind_apt(apt)
 
     apt.onread = function(apt, body)
         local msg = objectbuf.decode(body, sym)
+
+        if not msg.type and apt.privkey then
+            local edata = apt.privkey:open(table.unpack(msg))
+            if not edata then
+                return
+            end
+            msg = objectbuf.decode(edata, sym)
+        end
+
         if not msg then
             print("decode failed.", host, port, #(body))
             return
@@ -562,6 +656,7 @@ local function bind_apt(apt)
             _sync_port()
         elseif apt.ppkeepalive_output_index_map[package.output_index] then
             apt.ppkeepalive_output_index_map[package.output_index] = nil
+            apt.sent_keepalive = true
         end
     end
 
@@ -620,6 +715,9 @@ function onStart()
         string.format("%s:%d", config.remote_host, config.remote_port)
     )
 
+    remote_serv.peer_key = "<server>"
+    remote_serv.connected = true
+
     local apt_mt = getmetatable(remote_serv)
 
     apt_mt.send_msg = function(apt, msg)
@@ -627,11 +725,18 @@ function onStart()
         if config.debug_nat then
             print(apt.host, apt.port, "send", cjson.encode(msg))
         end
-        return apt:send(objectbuf.encode(msg, sym))
+
+        if apt.pubkey then
+            local data = objectbuf.encode(msg, sym)
+            local edata = objectbuf.encode({apt.pubkey:seal(data)}, sym)
+            return apt:send(edata)
+        else
+            return apt:send(objectbuf.encode(msg, sym))
+        end
     end
 
     apt_mt.send_keepalive = function(apt)
-        if apt._output_chain.size < 10 then
+        if apt.output_chain_count < 10 then
             apt.last_keepalive = utils.gettime()
             local output_index = apt:send_msg {type = "ppkeepalive"}
             apt.ppkeepalive_output_index_map[output_index] = true
