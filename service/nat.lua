@@ -20,34 +20,52 @@ local upnp = require "fan.upnp"
 local openssl = require "openssl"
 local base64 = require "base64"
 local pkey = openssl.pkey
+local cipher = openssl.cipher
 local pubkey = nil
 local privkey = nil
+local publickey = nil
 
-local f = io.open("id_rsa", "rb")
-if f then
-    local data = f:read("*all")
-    f:close()
-    privkey = pkey.read(data, true)
-else
-    privkey = pkey.new("rsa", 2048)
+local AES128 = cipher.get("aes-128-ctr")
 
-    local f = io.open("id_rsa", "wb")
-    f:write(privkey:export())
-    f:close()
-end
-
+local data_path = "data.buf"
 local data_map = {}
-local f = io.open("data.buf", "rb")
-if f then
-    local data = f:read("*all")
-    f:close()
 
-    data_map = objectbuf.decode(data)
+local function save_data_map()
+    local data = objectbuf.encode(data_map)
+    local f = io.open(data_path, "wb")
+    f:write(data)
+    f:close()
 end
 
-pubkey = pkey.get_public(privkey)
+local function load_data_map()
+    local f = io.open(data_path, "rb")
+    if f then
+        local data = f:read("*all")
+        f:close()
 
-local publickey = pubkey:export("der")
+        data_map = objectbuf.decode(data)
+    end
+
+    if data_map.privkey then
+        privkey = pkey.read(data_map.privkey, true)
+    else
+        privkey = pkey.new("rsa", 2048)
+
+        data_map.privkey = privkey:export("der")
+        save_data_map()
+    end
+
+    pubkey = pkey.get_public(privkey)
+    publickey = pubkey:export("der")
+end
+
+local function reset_data_map()
+    data_map = {}
+    os.remove(data_path)
+    load_data_map()
+end
+
+load_data_map()
 
 local cjson = require "cjson"
 require "compat53"
@@ -109,23 +127,28 @@ local function _sync_port()
 end
 
 function command_map.register(apt, host, port, msg)
+    if msg.error then
+        reset_data_map()
+        return
+    end
+
     if msg.publickey then
         local publickey = privkey:open(table.unpack(msg.publickey))
 
         data_map.publickey = publickey
         data_map.uid = privkey:open(table.unpack(msg.uid))
-        
-        local data = objectbuf.encode(data_map)
-        local f = io.open("data.buf", "wb")
-        f:write(data)
-        f:close()
+
+        save_data_map()
     end
 
     if data_map.publickey then
         apt.pubkey = pkey.read(data_map.publickey)
     end
+end
 
-    apt.privkey = privkey
+function command_map.ppkeepalive(apt, host, port, msg)
+    print(host, port, cjson.encode(msg))
+    apt.incoming_key = msg.key
 end
 
 function command_map.list(apt, host, port, msg)
@@ -146,16 +169,26 @@ function command_map.list(apt, host, port, msg)
         if v.internal_host and v.internal_port then
             shared.allowed_map_touch(v.internal_host, v.internal_port)
         end
+
+        if v.data then
+            for i, v in ipairs(v.data) do
+                if v.host and v.port then
+                    shared.allowed_map_touch(v.host, v.port)
+                end
+            end
+        end
     end
 
     for i, v in ipairs(msg.data) do
         if config.debug_nat then
             print("list", i, cjson.encode(v))
         end
+        local pubkey = pkey.read(v.publickey)
         local clientkey = v.clientkey
         local apt = shared.clientkey_apt_map[clientkey]
         if apt and clientkey then
             apt.peer_key = clientkey
+            apt.pubkey = pubkey
         end
         local peer = apt and shared.weak_apt_peer_map[apt] or nil
         if peer then
@@ -163,30 +196,24 @@ function command_map.list(apt, host, port, msg)
                 apt:send_keepalive()
             end
         else
-            local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
-            apt.peer_key = clientkey
-            apt:send_keepalive()
-
+            local client_list = {}
+            table.insert(client_list, {host = v.host, port = v.port})
             if v.internal_host and v.internal_port then
-                local apt =
-                    shared.bindserv.getapt(
-                    v.internal_host,
-                    v.internal_port,
-                    nil,
-                    string.format("%s:%d", v.internal_host, v.internal_port)
-                )
-                apt.peer_key = clientkey
-                apt:send_keepalive()
+                table.insert(client_list, {host = v.internal_host, port = v.internal_port})
             end
-
             if v.data then
                 for i, v in ipairs(v.data) do
                     if v.host and v.port then
-                        local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
-                        apt.peer_key = clientkey
-                        apt:send_keepalive()
+                        table.insert(client_list, {host = v.host, port = v.port})
                     end
                 end
+            end
+
+            for i, v in ipairs(client_list) do
+                local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+                apt.peer_key = clientkey
+                apt.pubkey = pubkey
+                apt:send_keepalive()
             end
         end
     end
@@ -251,7 +278,7 @@ function command_map.ppconnect(apt, host, port, msg)
                 print("onconnected")
             end
             obj.connected = true
-            apt:send_msg {type = "ppconnected", connkey = connkey}
+            apt:send_msg({type = "ppconnected", connkey = connkey}, true)
         end,
         onread = function(buf)
             local obj = weak_obj
@@ -426,7 +453,7 @@ local function list_peers(bindserv)
         remote_serv.peer_key = "<server>"
         remote_serv.connected = true
 
-        if remote_serv.output_chain_count < 10 then
+        if remote_serv.output_chain_count < remote_serv._WAITING_COUNT then
             if remote_serv.pubkey then
                 remote_serv:send_msg {
                     type = "list",
@@ -439,13 +466,13 @@ local function list_peers(bindserv)
                         type = "register",
                         uid = data_map.uid,
                         challenge = server_pubkey:encrypt(string.format("%s", os.time()))
-                    }            
+                    }
                 else
                     remote_serv:send_msg {
                         type = "register",
-                        publickey = publickey,
+                        publickey = publickey
                     }
-                end        
+                end
             end
         end
 
@@ -553,12 +580,15 @@ local function _flush_connection_map(tunnel_apt, peer, conn_key, map_key, flush_
                 local auto_index = obj.auto_index
                 obj.auto_index = auto_index < config.auto_index_max and auto_index + 1 or 1
                 local forward_index =
-                    tunnel_apt:send_msg {
-                    type = flush_type,
-                    connkey = connkey,
-                    data = data,
-                    index = auto_index
-                }
+                    tunnel_apt:send_msg(
+                    {
+                        type = flush_type,
+                        connkey = connkey,
+                        data = data,
+                        index = auto_index
+                    },
+                    true
+                )
 
                 obj.outgoing_count = obj.outgoing_count + 1
 
@@ -571,7 +601,7 @@ local function _flush_connection_map(tunnel_apt, peer, conn_key, map_key, flush_
             -- send disconnect command to remote peer until all data have been flushed to it.
             obj.need_send_disconnect = nil
             peer[map_key][connkey] = nil
-            tunnel_apt:send_msg {type = disconnect_type, connkey = connkey}
+            tunnel_apt:send_msg({type = disconnect_type, connkey = connkey}, true)
         end
     end
 end
@@ -610,16 +640,20 @@ local function bind_apt(apt)
 
     apt.onread = function(apt, body)
         local msg = objectbuf.decode(body, sym)
-
-        if not msg.type and apt.privkey then
-            local edata = apt.privkey:open(table.unpack(msg))
+        if #msg == 2 and apt.incoming_key then
+            local iv, data = msg[1], msg[2]
+            local d = AES128:decrypt_new(apt.incoming_key, iv)
+            local edata = d:update(data) .. d:final()
+            msg = objectbuf.decode(edata, sym)
+        elseif #msg == 3 and privkey then
+            local edata = privkey:open(table.unpack(msg))
             if not edata then
                 return
             end
             msg = objectbuf.decode(edata, sym)
         end
 
-        if not msg then
+        if not msg or not msg.type then
             print("decode failed.", host, port, #(body))
             return
         end
@@ -720,25 +754,36 @@ function onStart()
 
     local apt_mt = getmetatable(remote_serv)
 
-    apt_mt.send_msg = function(apt, msg)
+    apt_mt.send_msg = function(apt, msg, aes128)
         msg.clientkey = clientkey
         if config.debug_nat then
             print(apt.host, apt.port, "send", cjson.encode(msg))
         end
 
-        if apt.pubkey then
-            local data = objectbuf.encode(msg, sym)
-            local edata = objectbuf.encode({apt.pubkey:seal(data)}, sym)
+        local data = objectbuf.encode(msg, sym)
+
+        if aes128 and apt.outgoing_key then
+            local iv = openssl.random(16)
+            local d = AES128:encrypt_new(apt.outgoing_key, iv)
+            local edata = objectbuf.encode({iv, d:update(data) .. d:final()}, sym)
             return apt:send(edata)
         else
-            return apt:send(objectbuf.encode(msg, sym))
+            if apt.pubkey then
+                local edata = objectbuf.encode({apt.pubkey:seal(data)}, sym)
+                return apt:send(edata)
+            else
+                return apt:send(data)
+            end
         end
     end
 
     apt_mt.send_keepalive = function(apt)
-        if apt.output_chain_count < 10 then
+        if apt.output_chain_count < apt._WAITING_COUNT then
             apt.last_keepalive = utils.gettime()
-            local output_index = apt:send_msg {type = "ppkeepalive"}
+            if not apt.outgoing_key then
+                apt.outgoing_key = openssl.random(16)
+            end
+            local output_index = apt:send_msg({type = "ppkeepalive", key = apt.outgoing_key})
             apt.ppkeepalive_output_index_map[output_index] = true
         end
     end
@@ -805,12 +850,15 @@ function bind_service_mt:bind()
 
             local weak_obj = utils.weakify_object(obj)
 
-            self.tunnel_apt:send_msg {
-                type = "ppconnect",
-                connkey = connkey,
-                host = self.remote_host,
-                port = self.remote_port
-            }
+            self.tunnel_apt:send_msg(
+                {
+                    type = "ppconnect",
+                    connkey = connkey,
+                    host = self.remote_host,
+                    port = self.remote_port
+                },
+                true
+            )
 
             apt:bind {
                 onread = function(buf)

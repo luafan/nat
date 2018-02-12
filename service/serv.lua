@@ -26,10 +26,14 @@ local function create_user(ctx, publickey)
     local m = ctx.user("one", "where client_publickey=?", client_publickey)
     if not m then
         local privatekey = pkey.new("rsa", 2048)
-        m = ctx.user("new", {
-            client_publickey = client_publickey,
-            server_privatekey = base64.encode(privatekey:export("der"))
-        })
+        m =
+            ctx.user(
+            "new",
+            {
+                client_publickey = client_publickey,
+                server_privatekey = base64.encode(privatekey:export("der"))
+            }
+        )
         m.privkey = privatekey
     else
         m.privkey = pkey.read(base64.decode(m.server_privatekey), true)
@@ -47,7 +51,7 @@ local function get_keys(ctx, uid)
         m.publickey = base64.decode(m.client_publickey)
         m.privkey = pkey.read(base64.decode(m.server_privatekey), true)
         m.pubkey = pkey.read(m.publickey)
-        
+
         return m
     end
 end
@@ -66,25 +70,45 @@ function command_map.register(apt, msg)
     if msg.publickey then
         local m = ctxpool:safe(create_user, msg.publickey)
         local server_publickey = m.privkey:get_public():export("der")
-        apt_send_msg(apt, {
-            type = msg.type,
-            uid = { m.pubkey:seal(m.id) },
-            publickey = { m.pubkey:seal(server_publickey) },
-        }, true)
+        apt_send_msg(
+            apt,
+            {
+                type = msg.type,
+                uid = {m.pubkey:seal(m.id)},
+                publickey = {m.pubkey:seal(server_publickey)}
+            },
+            true
+        )
         apt.pubkey = m.pubkey
         apt.privkey = m.privkey
         apt.publickey = m.publickey
     elseif msg.challenge and msg.uid then
         local m = ctxpool:safe(get_keys, msg.uid)
-        local data = m.privkey:decrypt(msg.challenge)
-        if data and math.abs(tonumber(data) - os.time()) < 60 then
-            apt.pubkey = m.pubkey
-            apt.privkey = m.privkey
-            apt.publickey = m.publickey
-            apt_send_msg(apt, {
-                type = msg.type
-            }, true)
+        if m then
+            local data = m.privkey:decrypt(msg.challenge)
+            if data and math.abs(tonumber(data) - os.time()) < 60 then
+                apt.pubkey = m.pubkey
+                apt.privkey = m.privkey
+                apt.publickey = m.publickey
+                apt_send_msg(
+                    apt,
+                    {
+                        type = msg.type
+                    },
+                    true
+                )
+                return
+            end
         end
+
+        apt_send_msg(
+            apt,
+            {
+                type = msg.type,
+                error = "invaild challenge"
+            },
+            true
+        )
     end
 end
 
