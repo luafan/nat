@@ -187,7 +187,6 @@ function command_map.list(apt, host, port, msg)
         else
             for i, v in ipairs(client_list) do
                 local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
-                apt.peer_key = clientkey
                 apt.pubkey = pubkey
                 apt:send_keepalive()
             end
