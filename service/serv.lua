@@ -116,14 +116,14 @@ end
 function command_map.list(apt, msg)
     apt.internal_addr_list = msg.internal_addr_list
 
-    -- if msg.assistant_addr_map then
-    --     for k, v in pairs(msg.assistant_addr_map) do
-    --         local apt = clientkey_conn_map[k]
-    --         if apt and (v.host ~= apt.host or v.port ~= apt.port) then
-    --             apt.my_addr_map[string.format("%s:%d", v.host, v.port)] = v
-    --         end
-    --     end
-    -- end
+    if msg.assistant_addr_map then
+        for k, v in pairs(msg.assistant_addr_map) do
+            local apt = clientkey_conn_map[k]
+            if apt and (v.host ~= apt.host or v.port ~= apt.port) then
+                apt.my_addr_map[string.format("%s:%d", v.host, v.port)] = v
+            end
+        end
+    end
 
     local peer_list = {}
 
@@ -143,16 +143,16 @@ function command_map.list(apt, msg)
                 table.insert(addr_list, v)
             end
 
-            -- if apt.host == _apt.host and apt.internal_addr_list and _apt.internal_addr_list then
-            --     -- if two peers come from same ip
-            --     for i,v in ipairs(apt.internal_addr_list) do
-            --         for _i,_v in ipairs(_apt.internal_addr_list) do
-            --             if v.netmask == _v.netmask then
-            --                 table.insert(addr_list, _v)
-            --             end
-            --         end
-            --     end
-            -- end
+            if apt.host == _apt.host and apt.internal_addr_list and _apt.internal_addr_list then
+                -- if two peers come from same ip
+                for i,v in ipairs(apt.internal_addr_list) do
+                    for _i,_v in ipairs(_apt.internal_addr_list) do
+                        if v.netmask == _v.netmask then
+                            table.insert(addr_list, _v)
+                        end
+                    end
+                end
+            end
 
             table.insert(peer_list, {
                 host = _apt.host,

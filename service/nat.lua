@@ -157,14 +157,11 @@ function command_map.list(apt, host, port, msg)
     if not shared.internal_port then
         shared.internal_port = shared.bindserv.serv:getPort()
     end
-    
-    local client_list = {}
+
     for i, v in ipairs(msg.peer_list) do
-        table.insert(client_list, {host = v.host, port = v.port})
         shared.allowed_map_touch(v.host, v.port)
 
         for i, v in ipairs(v.addr_list) do
-            table.insert(client_list, {host = v.host, port = v.port})
             shared.allowed_map_touch(v.host, v.port)
         end
     end
@@ -185,8 +182,16 @@ function command_map.list(apt, host, port, msg)
                 apt:send_keepalive()
             end
         else
+            local client_list = {}
+            table.insert(client_list, {host = v.host, port = v.port})
+
+            for i, v in ipairs(v.addr_list) do
+                table.insert(client_list, {host = v.host, port = v.port})
+            end
+
             for i, v in ipairs(client_list) do
                 local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
+                apt.peer_key = clientkey
                 apt.pubkey = pubkey
                 apt:send_keepalive()
             end
@@ -467,7 +472,7 @@ local function list_peers(bindserv)
                 else
                     remote_serv:send_msg {
                         type = "register",
-                        publickey = publickey,
+                        publickey = publickey
                     }
                 end
             end
@@ -744,7 +749,7 @@ function onStart()
 
     apt_mt.send_msg = function(apt, msg, aes128)
         msg.clientkey = clientkey
-        
+
         if config.debug_nat then
             print(apt.host, apt.port, "send", cjson.encode(msg))
         end
