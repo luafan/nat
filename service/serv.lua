@@ -114,62 +114,57 @@ function command_map.register(apt, msg)
 end
 
 function command_map.list(apt, msg)
-    if msg.internal_host and msg.internal_port then
-        apt.internal_host = msg.internal_host
-        apt.internal_port = msg.internal_port
-        apt.internal_netmask = msg.internal_netmask
-    end
-    if msg.data then
-        for k, v in pairs(msg.data) do
+    apt.internal_addr_list = msg.internal_addr_list
+
+    if msg.assistant_addr_map then
+        for k, v in pairs(msg.assistant_addr_map) do
             local apt = clientkey_conn_map[k]
-            if apt then
-                apt.data[string.format("%s:%d", v.host, v.port)] = v
+            if apt and (v.host ~= apt.host or v.port ~= apt.port) then
+                apt.my_addr_map[string.format("%s:%d", v.host, v.port)] = v
             end
         end
     end
 
-    local t = {}
-    local current_time = utils.gettime()
+    local peer_list = {}
 
     for publickey, _apt in pairs(key_conn_map) do
         if _apt ~= apt and _apt.publickey then
-            local data = {}
+            local addr_list = {}
 
             if _apt.host == "103.250.195.161" then
                 local t = {host = "203.156.209.194", port = _apt.port}
-                _apt.data[string.format("%s:%d", t.host, t.port)] = t
+                _apt.my_addr_map[string.format("%s:%d", t.host, t.port)] = t
             elseif _apt.host == "203.156.209.194" then
                 local t = {host = "103.250.195.161", port = _apt.port}
-                _apt.data[string.format("%s:%d", t.host, t.port)] = t
+                _apt.my_addr_map[string.format("%s:%d", t.host, t.port)] = t
             end
 
-            _apt.data[string.format("%s:%d", _apt.host, _apt.port)] = nil
-
-            for k, v in pairs(_apt.data) do
-                table.insert(data, v)
+            for k, v in pairs(_apt.my_addr_map) do
+                table.insert(addr_list, v)
             end
 
-            local obj = {
+            if apt.host == _apt.host and apt.internal_addr_list and _apt.internal_addr_list then
+                -- if two peers come from same ip
+                for i,v in ipairs(apt.internal_addr_list) do
+                    for _i,_v in ipairs(_apt.internal_addr_list) do
+                        if v.netmask == _v.netmask then
+                            table.insert(addr_list, _v)
+                        end
+                    end
+                end
+            end
+
+            table.insert(peer_list, {
                 host = _apt.host,
                 port = _apt.port,
                 publickey = _apt.publickey,
                 clientkey = _apt.clientkey,
-                data = data
-            }
-
-            if apt.host == _apt.host then
-                -- if two peers come from same ip
-                if _apt.internal_host and _apt.internal_port then
-                    obj.internal_host = _apt.internal_host
-                    obj.internal_port = _apt.internal_port
-                end
-            end
-
-            table.insert(t, obj)
+                addr_list = addr_list,
+            })
         end
     end
 
-    apt_send_msg(apt, {type = msg.type, data = t})
+    apt_send_msg(apt, {type = msg.type, peer_list = peer_list})
 end
 
 function onStart()
@@ -183,12 +178,25 @@ function onStart()
         apt.onread = function(apt, body)
             local msg = objectbuf.decode(body, sym)
 
-            if not msg.type and apt.privkey then
-                local edata = apt.privkey:open(table.unpack(msg))
-                if not edata then
-                    return
+            if #msg == 3 then
+                if apt.privkey then
+                    local edata = apt.privkey:open(table.unpack(msg))
+                    if not edata then
+                        print(apt.dest, "decrypt failed.")
+                        return
+                    end
+                    msg = objectbuf.decode(edata, sym)
+                else
+                    print(apt.dest, "receive encrypted message, but current address has not register yet.")
+                    apt_send_msg(
+                        apt,
+                        {
+                            type = "register",
+                            error = "need register"
+                        },
+                        true
+                    )            
                 end
-                msg = objectbuf.decode(edata, sym)
             end
 
             if msg.type == "echo" then
@@ -202,13 +210,15 @@ function onStart()
 
             apt.last_keepalive = utils.gettime()
 
-            if not apt.data then
-                apt.data = {}
+            if not apt.my_addr_map then
+                apt.my_addr_map = {}
             end
 
             local command = command_map[msg.type]
             if command then
                 command(apt, msg)
+            else
+                print(apt.dest, "invaild msg type", msg.type)
             end
 
             if apt.publickey and not key_conn_map[apt.publickey] then

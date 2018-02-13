@@ -11,14 +11,30 @@ return {
     "ppdisconnectedclient",
     "ppdata_req",
     "ppdata_resp",
+
   },
   connkey = "",
+  
   clientkey = "",
+  internal_addr_list = "",
+  assistant_addr_map = "",
+
+  key = "",
+
   data = "",
   index = 0,
+  
   host = "",
   port = 0,
-  internal_host = "",
-  internal_port = 0,
+  netmask = "",
 
+  uid = "",
+  publickey = "",
+  addr_list = "",
+  peer_list = "",
+
+  error = {
+    "need register",
+    "invaild challenge",
+  },
 }

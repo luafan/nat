@@ -127,8 +127,11 @@ local function _sync_port()
 end
 
 function command_map.register(apt, host, port, msg)
-    if msg.error then
+    if msg.error == "invaild challenge" then
         reset_data_map()
+        return
+    elseif msg.error == "need register" then
+        apt.pubkey = nil
         return
     end
 
@@ -153,32 +156,20 @@ end
 function command_map.list(apt, host, port, msg)
     if not shared.internal_port then
         shared.internal_port = shared.bindserv.serv:getPort()
-        local obj = upnp.new(1)
-        obj:AddPortMapping(
-            shared.internal_host,
-            string.format("%d", shared.internal_port),
-            string.format("%d", shared.internal_port),
-            "udp"
-        )
     end
-
-    for i, v in ipairs(msg.data) do
+    
+    local client_list = {}
+    for i, v in ipairs(msg.peer_list) do
+        table.insert(client_list, {host = v.host, port = v.port})
         shared.allowed_map_touch(v.host, v.port)
 
-        if v.internal_host and v.internal_port then
-            shared.allowed_map_touch(v.internal_host, v.internal_port)
-        end
-
-        if v.data then
-            for i, v in ipairs(v.data) do
-                if v.host and v.port then
-                    shared.allowed_map_touch(v.host, v.port)
-                end
-            end
+        for i, v in ipairs(v.addr_list) do
+            table.insert(client_list, {host = v.host, port = v.port})
+            shared.allowed_map_touch(v.host, v.port)
         end
     end
 
-    for i, v in ipairs(msg.data) do
+    for i, v in ipairs(msg.peer_list) do
         if config.debug_nat then
             print("list", i, cjson.encode(v))
         end
@@ -194,19 +185,6 @@ function command_map.list(apt, host, port, msg)
                 apt:send_keepalive()
             end
         else
-            local client_list = {}
-            table.insert(client_list, {host = v.host, port = v.port})
-            if v.internal_host and v.internal_port then
-                table.insert(client_list, {host = v.internal_host, port = v.internal_port})
-            end
-            if v.data then
-                for i, v in ipairs(v.data) do
-                    if v.host and v.port then
-                        table.insert(client_list, {host = v.host, port = v.port})
-                    end
-                end
-            end
-
             for i, v in ipairs(client_list) do
                 local apt = shared.bindserv.getapt(v.host, v.port, nil, string.format("%s:%d", v.host, v.port))
                 apt.peer_key = clientkey
@@ -417,28 +395,45 @@ end
 
 local function list_peers(bindserv)
     while not bindserv.stop do
-        local data = {}
+        local assistant_addr_map = {}
         for apt, peer in pairs(shared.weak_apt_peer_map) do
             if apt.peer_key then
-                data[apt.peer_key] = {
+                assistant_addr_map[apt.peer_key] = {
                     host = apt.host,
                     port = apt.port
                 }
             end
         end
 
+        local internal_addr_list = {}
+
         if shared.internal_port and fan.getinterfaces then
             for i, v in ipairs(fan.getinterfaces()) do
                 if v.type == "inet" then
                     if v.host ~= "127.0.0.1" then
-                        data.internal_host = v.host
-                        data.internal_port = shared.internal_port
-                        data.internal_netmask = shared.internal_netmask
-                        
-                        data[clientkey] = {
-                            host = v.host,
-                            port = shared.internal_port
-                        }
+                        table.insert(
+                            internal_addr_list,
+                            {
+                                host = v.host,
+                                port = shared.internal_port,
+                                netmask = v.netmask
+                            }
+                        )
+
+                        if v.name == "wlp3s0" or v.name == "en0" or v.name == "eth0" then
+                            coroutine.wrap(
+                                function()
+                                    local obj = upnp.new(1)
+
+                                    obj:AddPortMapping(
+                                        v.host,
+                                        string.format("%d", shared.internal_port),
+                                        string.format("%d", shared.internal_port),
+                                        "udp"
+                                    )
+                                end
+                            )()
+                        end
                     end
                 end
             end
@@ -459,20 +454,23 @@ local function list_peers(bindserv)
             if remote_serv.pubkey then
                 remote_serv:send_msg {
                     type = "list",
-                    data = data
+                    assistant_addr_map = assistant_addr_map,
+                    internal_addr_list = internal_addr_list
                 }
             else
                 if data_map.uid and data_map.publickey then
                     local server_pubkey = pkey.read(data_map.publickey)
                     remote_serv:send_msg {
                         type = "register",
+                        clientkey = clientkey,
                         uid = data_map.uid,
                         challenge = server_pubkey:encrypt(string.format("%s", os.time()))
                     }
                 else
                     remote_serv:send_msg {
                         type = "register",
-                        publickey = publickey
+                        clientkey = clientkey,
+                        publickey = publickey,
                     }
                 end
             end
@@ -733,18 +731,6 @@ function onStart()
     end
     status = "running"
 
-    if fan.getinterfaces then
-        for i, v in ipairs(fan.getinterfaces()) do
-            if v.type == "inet" then
-                print(cjson.encode(v))
-                if v.name == "wlp3s0" or v.name == "en0" or v.name == "eth0" then
-                    shared.internal_host = v.host
-                    shared.internal_netmask = v.netmask
-                end
-            end
-        end
-    end
-
     shared.bindserv = connector.bind("udp://0.0.0.0:0")
     local remote_serv =
         shared.bindserv.getapt(
@@ -760,7 +746,6 @@ function onStart()
     local apt_mt = getmetatable(remote_serv)
 
     apt_mt.send_msg = function(apt, msg, aes128)
-        msg.clientkey = clientkey
         if config.debug_nat then
             print(apt.host, apt.port, "send", cjson.encode(msg))
         end
@@ -788,7 +773,7 @@ function onStart()
             if not apt.outgoing_key then
                 apt.outgoing_key = openssl.random(16)
             end
-            local output_index = apt:send_msg({type = "ppkeepalive", key = apt.outgoing_key})
+            local output_index = apt:send_msg({clientkey = clientkey, type = "ppkeepalive", key = apt.outgoing_key})
             apt.ppkeepalive_output_index_map[output_index] = true
         end
     end
