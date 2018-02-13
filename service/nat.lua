@@ -462,14 +462,12 @@ local function list_peers(bindserv)
                     local server_pubkey = pkey.read(data_map.publickey)
                     remote_serv:send_msg {
                         type = "register",
-                        clientkey = clientkey,
                         uid = data_map.uid,
                         challenge = server_pubkey:encrypt(string.format("%s", os.time()))
                     }
                 else
                     remote_serv:send_msg {
                         type = "register",
-                        clientkey = clientkey,
                         publickey = publickey,
                     }
                 end
@@ -746,6 +744,8 @@ function onStart()
     local apt_mt = getmetatable(remote_serv)
 
     apt_mt.send_msg = function(apt, msg, aes128)
+        msg.clientkey = clientkey
+        
         if config.debug_nat then
             print(apt.host, apt.port, "send", cjson.encode(msg))
         end
@@ -773,7 +773,7 @@ function onStart()
             if not apt.outgoing_key then
                 apt.outgoing_key = openssl.random(16)
             end
-            local output_index = apt:send_msg({clientkey = clientkey, type = "ppkeepalive", key = apt.outgoing_key})
+            local output_index = apt:send_msg({type = "ppkeepalive", key = apt.outgoing_key})
             apt.ppkeepalive_output_index_map[output_index] = true
         end
     end
