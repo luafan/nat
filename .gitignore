@@ -20,3 +20,4 @@ ProFi.lua
 luacov.report.out
 luacov.stats.out
 MyProfilingReport.txt
+*.buf
