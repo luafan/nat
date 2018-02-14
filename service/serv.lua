@@ -17,6 +17,7 @@ local ctxpool = require "ctxpool"
 local sym = objectbuf.symbol(require "nat_dic")
 
 local key_conn_map = {}
+local clientkey_conn_map = {}
 
 local command_map = {}
 local serv = nil
@@ -26,10 +27,14 @@ local function create_user(ctx, publickey)
     local m = ctx.user("one", "where client_publickey=?", client_publickey)
     if not m then
         local privatekey = pkey.new("rsa", 2048)
-        m = ctx.user("new", {
-            client_publickey = client_publickey,
-            server_privatekey = base64.encode(privatekey:export("der"))
-        })
+        m =
+            ctx.user(
+            "new",
+            {
+                client_publickey = client_publickey,
+                server_privatekey = base64.encode(privatekey:export("der"))
+            }
+        )
         m.privkey = privatekey
     else
         m.privkey = pkey.read(base64.decode(m.server_privatekey), true)
@@ -47,7 +52,7 @@ local function get_keys(ctx, uid)
         m.publickey = base64.decode(m.client_publickey)
         m.privkey = pkey.read(base64.decode(m.server_privatekey), true)
         m.pubkey = pkey.read(m.publickey)
-        
+
         return m
     end
 end
@@ -66,85 +71,100 @@ function command_map.register(apt, msg)
     if msg.publickey then
         local m = ctxpool:safe(create_user, msg.publickey)
         local server_publickey = m.privkey:get_public():export("der")
-        apt_send_msg(apt, {
-            type = msg.type,
-            uid = { m.pubkey:seal(m.id) },
-            publickey = { m.pubkey:seal(server_publickey) },
-        }, true)
+        apt_send_msg(
+            apt,
+            {
+                type = msg.type,
+                uid = {m.pubkey:seal(m.id)},
+                publickey = {m.pubkey:seal(server_publickey)}
+            },
+            true
+        )
         apt.pubkey = m.pubkey
         apt.privkey = m.privkey
         apt.publickey = m.publickey
     elseif msg.challenge and msg.uid then
         local m = ctxpool:safe(get_keys, msg.uid)
-        local data = m.privkey:decrypt(msg.challenge)
-        if data and math.abs(tonumber(data) - os.time()) < 60 then
-            apt.pubkey = m.pubkey
-            apt.privkey = m.privkey
-            apt.publickey = m.publickey
-            apt_send_msg(apt, {
-                type = msg.type
-            }, true)
+        if m then
+            local data = m.privkey:decrypt(msg.challenge)
+            if data and math.abs(tonumber(data) - os.time()) < 60 then
+                apt.pubkey = m.pubkey
+                apt.privkey = m.privkey
+                apt.publickey = m.publickey
+                apt_send_msg(
+                    apt,
+                    {
+                        type = msg.type
+                    },
+                    true
+                )
+                return
+            end
         end
+
+        apt_send_msg(
+            apt,
+            {
+                type = msg.type,
+                error = "invaild challenge"
+            },
+            true
+        )
     end
 end
 
 function command_map.list(apt, msg)
-    if msg.internal_host and msg.internal_port then
-        apt.internal_host = msg.internal_host
-        apt.internal_port = msg.internal_port
-        apt.internal_netmask = msg.internal_netmask
-    end
-    if msg.data then
-        for k, v in pairs(msg.data) do
-            local c = key_conn_map[k]
-            if c then
-                c.data[string.format("%s:%d", v.host, v.port)] = v
+    apt.internal_addr_list = msg.internal_addr_list
+
+    if msg.assistant_addr_map then
+        for k, v in pairs(msg.assistant_addr_map) do
+            local apt = clientkey_conn_map[k]
+            if apt and (v.host ~= apt.host or v.port ~= apt.port) then
+                apt.my_addr_map[string.format("%s:%d", v.host, v.port)] = v
             end
         end
     end
 
-    local t = {}
-    local current_time = utils.gettime()
+    local peer_list = {}
 
     for publickey, _apt in pairs(key_conn_map) do
         if _apt ~= apt and _apt.publickey then
-            local data = {}
+            local addr_list = {}
 
             if _apt.host == "103.250.195.161" then
                 local t = {host = "203.156.209.194", port = _apt.port}
-                _apt.data[string.format("%s:%d", t.host, t.port)] = t
+                _apt.my_addr_map[string.format("%s:%d", t.host, t.port)] = t
             elseif _apt.host == "203.156.209.194" then
                 local t = {host = "103.250.195.161", port = _apt.port}
-                _apt.data[string.format("%s:%d", t.host, t.port)] = t
+                _apt.my_addr_map[string.format("%s:%d", t.host, t.port)] = t
             end
 
-            _apt.data[string.format("%s:%d", _apt.host, _apt.port)] = nil
-
-            for k, v in pairs(_apt.data) do
-                table.insert(data, v)
+            for k, v in pairs(_apt.my_addr_map) do
+                table.insert(addr_list, v)
             end
 
-            local obj = {
+            if apt.host == _apt.host and apt.internal_addr_list and _apt.internal_addr_list then
+                -- if two peers come from same ip
+                for i,v in ipairs(apt.internal_addr_list) do
+                    for _i,_v in ipairs(_apt.internal_addr_list) do
+                        if v.netmask == _v.netmask then
+                            table.insert(addr_list, _v)
+                        end
+                    end
+                end
+            end
+
+            table.insert(peer_list, {
                 host = _apt.host,
                 port = _apt.port,
                 publickey = _apt.publickey,
                 clientkey = _apt.clientkey,
-                data = data
-            }
-
-            if apt.host == _apt.host then
-                -- if two peers come from same ip
-                if _apt.internal_host and _apt.internal_port then
-                    obj.internal_host = _apt.internal_host
-                    obj.internal_port = _apt.internal_port
-                end
-            end
-
-            table.insert(t, obj)
+                addr_list = addr_list,
+            })
         end
     end
 
-    apt_send_msg(apt, {type = msg.type, data = t})
+    apt_send_msg(apt, {type = msg.type, peer_list = peer_list})
 end
 
 function onStart()
@@ -158,12 +178,25 @@ function onStart()
         apt.onread = function(apt, body)
             local msg = objectbuf.decode(body, sym)
 
-            if not msg.type and apt.privkey then
-                local edata = apt.privkey:open(table.unpack(msg))
-                if not edata then
-                    return
+            if #msg == 3 then
+                if apt.privkey then
+                    local edata = apt.privkey:open(table.unpack(msg))
+                    if not edata then
+                        print(apt.dest, "decrypt failed.")
+                        return
+                    end
+                    msg = objectbuf.decode(edata, sym)
+                else
+                    print(apt.dest, "receive encrypted message, but current address has not register yet.")
+                    apt_send_msg(
+                        apt,
+                        {
+                            type = "register",
+                            error = "need register"
+                        },
+                        true
+                    )            
                 end
-                msg = objectbuf.decode(edata, sym)
             end
 
             if msg.type == "echo" then
@@ -177,19 +210,20 @@ function onStart()
 
             apt.last_keepalive = utils.gettime()
 
-            if not apt.data then
-                apt.data = {}
+            if not apt.my_addr_map then
+                apt.my_addr_map = {}
             end
-
-            -- print(apt.host, apt.port, cjson.encode(msg))
 
             local command = command_map[msg.type]
             if command then
                 command(apt, msg)
+            else
+                print(apt.dest, "invaild msg type", msg.type)
             end
 
             if apt.publickey and not key_conn_map[apt.publickey] then
                 key_conn_map[apt.publickey] = apt
+                clientkey_conn_map[apt.clientkey] = apt
             end
         end
     end
@@ -200,6 +234,7 @@ function onStart()
                 for publickey, apt in pairs(key_conn_map) do
                     if utils.gettime() - apt.last_keepalive > 30 then
                         print(apt.dest, "keepalive timeout.")
+                        clientkey_conn_map[apt.clientkey] = nil
                         apt:cleanup()
 
                         key_conn_map[publickey] = nil
