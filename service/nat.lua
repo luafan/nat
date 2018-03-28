@@ -844,9 +844,9 @@ function bind_service_mt:bind()
             local remote_port = self.remote_port
 
             if apt.original_dst then
-                local remoteinfo = apt:remoteinfo()
+                local local_host, local_port = apt:getsockname()
                 local original_host, original_port = apt:original_dst()
-                if original_host ~= remoteinfo.ip and original_port ~= remoteinfo.port then
+                if original_host ~= local_host and original_port ~= local_port then
                     remote_host = original_host
                     remote_port = original_port
                 end
