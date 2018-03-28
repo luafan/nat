@@ -840,6 +840,18 @@ function bind_service_mt:bind()
                 connected = true
             }
 
+            local remote_host = self.remote_host
+            local remote_port = self.remote_port
+
+            if apt.original_dst then
+                local remoteinfo = apt:remoteinfo()
+                local original_host, original_port = apt:original_dst()
+                if original_host ~= remoteinfo.ip and original_port ~= remoteinfo.port then
+                    remote_host = original_host
+                    remote_port = original_port
+                end
+            end
+
             peer.ppclient_connection_map[connkey] = obj
 
             local weak_obj = utils.weakify_object(obj)
@@ -848,8 +860,8 @@ function bind_service_mt:bind()
                 {
                     type = "ppconnect",
                     connkey = connkey,
-                    host = self.remote_host,
-                    port = self.remote_port
+                    host = remote_host,
+                    port = remote_port
                 },
                 true
             )

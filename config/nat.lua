@@ -22,4 +22,8 @@ outgoing_count_max = tonumber(os.getenv("OUTGOING_MAX") or 10)
 
 drop_package_outside_window = os.getenv("DROP_PACKAGE_OUTSIDE_WINDOW") == "true"
 
+udp_window_size = tonumber(os.getenv("UDP_WINDOW_SIZE") or 10)
+
+max_input_queue_size = tonumber(os.getenv("MAX_INPUT_QUEUE_SIZE") or 10)
+
 session_cache = {}
