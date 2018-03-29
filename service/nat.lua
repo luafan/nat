@@ -824,6 +824,22 @@ function bind_service_mt:bind()
             local connkey = connkey_index
             connkey_index = connkey_index + 1
 
+            local remote_host = self.remote_host
+            local remote_port = self.remote_port
+
+            if apt.original_dst then
+                local local_host, local_port = apt:getsockname()
+                local original_host, original_port = apt:original_dst()
+                if original_host ~= local_host and original_port ~= local_port then
+                    remote_host = original_host
+                    remote_port = original_port
+                end
+            end
+
+            if not remote_host or not remote_port then
+                return apt:close()
+            end
+
             local obj = {
                 connkey = connkey,
                 input_queue = {},
@@ -839,18 +855,6 @@ function bind_service_mt:bind()
                 auto_index = 1,
                 connected = true
             }
-
-            local remote_host = self.remote_host
-            local remote_port = self.remote_port
-
-            if apt.original_dst then
-                local local_host, local_port = apt:getsockname()
-                local original_host, original_port = apt:original_dst()
-                if original_host ~= local_host and original_port ~= local_port then
-                    remote_host = original_host
-                    remote_port = original_port
-                end
-            end
 
             peer.ppclient_connection_map[connkey] = obj
 
@@ -934,9 +938,6 @@ end
 
 function bind(params)
     local port = tonumber(params.port)
-    if shared.bind_map[port] then
-        return false, "bind already."
-    end
 
     local list = {}
     for apt, peer in pairs(shared.weak_apt_peer_map) do
@@ -955,6 +956,10 @@ function bind(params)
             return a.last_incoming_time > b.last_incoming_time
         end
     )
+
+    if shared.bind_map[port] then
+        shared.bind_map[port]:unbind()
+    end
 
     local t
     t = {
