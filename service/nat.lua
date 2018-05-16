@@ -55,6 +55,10 @@ local function load_data_map()
         save_data_map()
     end
 
+    if not data_map.bind_map then
+        data_map.bind_map = {}
+    end
+
     pubkey = pkey.get_public(privkey)
     publickey = pubkey:export("der")
 end
@@ -385,6 +389,8 @@ local function create_or_update_peer(apt, host, port, msg)
             ppclient_connection_map = {}
         }
         config.weaktable[string.format("peer_%s_%s", msg.clientkey, peer)] = peer
+
+        rebind()
     else
         peer.host = host
         peer.port = port
@@ -929,10 +935,20 @@ end
 
 function unbind(params)
     local port = tonumber(params.port)
+
+    data_map.bind_map[port] = nil
+    save_data_map()
+
     if shared.bind_map[port] then
         return shared.bind_map[port]:unbind()
     else
         return false, "not bind."
+    end
+end
+
+function rebind()
+    for port,params in pairs(data_map.bind_map) do
+        bind(params)
     end
 end
 
@@ -960,6 +976,9 @@ function bind(params)
     if shared.bind_map[port] then
         shared.bind_map[port]:unbind()
     end
+
+    data_map.bind_map[port] = params
+    save_data_map()
 
     local t
     t = {
