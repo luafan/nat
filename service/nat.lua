@@ -11,6 +11,7 @@ local coroutine = coroutine
 
 local fan = require "fan"
 local tcpd = require "fan.tcpd"
+local udpd = require "fan.udpd"
 local config = require "config"
 local connector = require "fan.connector"
 local objectbuf = require "fan.objectbuf"
@@ -18,7 +19,6 @@ local utils = require "fan.utils"
 local upnp = require "fan.upnp"
 
 local openssl = require "openssl"
-local base64 = require "base64"
 local pkey = openssl.pkey
 local cipher = openssl.cipher
 local pubkey = nil
@@ -55,8 +55,16 @@ local function load_data_map()
         save_data_map()
     end
 
-    if not data_map.bind_map then
-        data_map.bind_map = {}
+    if not data_map.bind_map_tcp then
+        if data_map.bind_map then
+            data_map.bind_map_tcp = data_map.bind_map
+        else
+            data_map.bind_map_tcp = {}
+        end
+    end
+
+    if not data_map.bind_map_udp then
+        data_map.bind_map_udp = {}
     end
 
     pubkey = pkey.get_public(privkey)
@@ -81,7 +89,8 @@ local sym = objectbuf.symbol(require "nat_dic")
 shared.clientkey_apt_map = {}
 shared.weak_apt_peer_map = {}
 -- setmetatable(shared.weak_apt_peer_map, {__mode = "kv"})
-shared.bind_map = {}
+shared.bind_map_tcp = {}
+shared.bind_map_udp = {}
 
 local allowed_map = {}
 shared.allowed_map = allowed_map
@@ -129,6 +138,8 @@ local function _sync_port()
         assert(coroutine.resume(sync_port_running))
     end
 end
+
+shared._sync_port = _sync_port
 
 function command_map.register(apt, host, port, msg)
     if msg.error == "invaild challenge" then
@@ -214,12 +225,59 @@ local function pp_close_service(peer, connkey)
     end
 end
 
-local function pp_close_client(obj, connkey)
-    obj.peer.ppclient_connection_map[connkey] = nil
-    if obj.apt then
-        obj.apt:close()
-        obj.apt = nil
+function command_map.ppudpreq(apt, host, port, msg)
+    if config.debug_nat then
+        print(host, port, cjson.encode(msg))
     end
+
+    local connkey = msg.connkey
+
+    local peer = shared.weak_apt_peer_map[apt]
+    local udpconn_map = peer.ppservice_udpconn_map
+
+    local obj = udpconn_map[connkey]
+    if not obj then
+        local incoming_queue = {}
+        local conn = nil
+        conn = udpd.new{
+            host = msg.host,
+            port = msg.port,
+            onread = function(data, from)
+                apt:send_msg(
+                    {
+                        type = "ppudpresp",
+                        connkey = connkey,
+                        data = data,
+                    }, true)
+            end,
+            onsendready = function()
+                if #(incoming_queue) > 0 then
+                    conn:send(table.remove(incoming_queue, 1))
+                end
+                if #(incoming_queue) > 0 then
+                    conn:send_req()
+                end
+            end
+        }
+        obj = {incoming_queue = incoming_queue, conn = conn}
+        udpconn_map[connkey] = obj
+    end
+
+    table.insert(obj.incoming_queue, msg.data)
+    obj.conn:send_req()
+end
+
+function command_map.ppudpresp(apt, host, port, msg)
+    if config.debug_nat then
+        print(host, port, cjson.encode(msg))
+    end
+
+    local peer = shared.weak_apt_peer_map[apt]
+    local obj = peer.ppclient_udpfrom_map[msg.connkey]
+    local udpconn = shared.bind_map_udp[obj.port]
+
+    table.insert(obj.incoming_queue, {msg.data, obj.from})
+    udpconn.serv_udp:send_req()
 end
 
 function command_map.ppconnect(apt, host, port, msg)
@@ -327,7 +385,7 @@ function command_map.ppdisconnectedmaster(apt, host, port, msg)
         obj.connected = nil
         obj.need_close_client = true
         if not obj.sending then
-            pp_close_client(obj, msg.connkey)
+            obj:close_client()
         end
     end
 end
@@ -386,7 +444,9 @@ local function create_or_update_peer(apt, host, port, msg)
             created = utils.gettime(),
             clientkey = msg.clientkey,
             ppservice_connection_map = {},
-            ppclient_connection_map = {}
+            ppclient_connection_map = {},
+            ppservice_udpconn_map = {},
+            ppclient_udpfrom_map = {},
         }
         config.weaktable[string.format("peer_%s_%s", msg.clientkey, peer)] = peer
 
@@ -520,7 +580,7 @@ local function keepalive_peers(bindserv)
         end
 
         -- cleanup peer's binding service
-        for port, t in pairs(shared.bind_map) do
+        for port, t in pairs(shared.bind_map_tcp) do
             if not live_peers[t.tunnel_apt] then
                 t:unbind()
             end
@@ -810,144 +870,32 @@ function onStop()
     status = "stopped"
 end
 
-local bind_service_mt = {}
-bind_service_mt.__index = bind_service_mt
-
-local connkey_index = 1
-
-function bind_service_mt:bind()
-    if self.serv then
-        return
-    end
-
-    local port = self.port
-    local peer = shared.weak_apt_peer_map[self.tunnel_apt]
-
-    self.serv =
-        tcpd.bind {
-        port = port,
-        onaccept = function(apt)
-            local connkey = connkey_index
-            connkey_index = connkey_index + 1
-
-            local remote_host = self.remote_host
-            local remote_port = self.remote_port
-
-            if apt.original_dst then
-                local local_host, local_port = apt:getsockname()
-                local original_host, original_port = apt:original_dst()
-                if original_host ~= local_host and original_port ~= local_port then
-                    remote_host = original_host
-                    remote_port = original_port
-                end
-            end
-
-            if not remote_host or not remote_port then
-                return apt:close()
-            end
-
-            local obj = {
-                connkey = connkey,
-                input_queue = {},
-                incoming_cache = {},
-                incoming_index = 0,
-                incoming_count = 0,
-                outgoing_count = 0,
-                apt = apt,
-                bind_port = port,
-                peer = utils.weakify_object(peer),
-                host = peer.host,
-                port = peer.port,
-                auto_index = 1,
-                connected = true
-            }
-
-            peer.ppclient_connection_map[connkey] = obj
-
-            local weak_obj = utils.weakify_object(obj)
-
-            self.tunnel_apt:send_msg(
-                {
-                    type = "ppconnect",
-                    connkey = connkey,
-                    host = remote_host,
-                    port = remote_port
-                },
-                true
-            )
-
-            apt:bind {
-                onread = function(buf)
-                    local obj = weak_obj
-                    table.insert(obj.input_queue, buf)
-
-                    if #(obj.input_queue) > MAX_INPUT_QUEUE_SIZE then
-                        obj.apt:pause_read()
-                        obj.pause_read = obj.apt
-                    end
-
-                    _sync_port()
-                end,
-                onsendready = function()
-                    local obj = weak_obj
-                    obj.sending = false
-                    if obj.need_close_client then
-                        pp_close_client(obj, connkey)
-                    end
-                end,
-                ondisconnected = function(msg)
-                    if config.debug_nat then
-                        print("client disconnected", msg)
-                    end
-
-                    local obj = weak_obj
-                    obj.connected = nil
-                    obj.apt = nil
-                    obj.need_send_disconnect = true
-                end
-            }
-
-            config.weaktable[string.format("service_apt_%s_%d", peer.clientkey, connkey)] = apt
-            config.weaktable[string.format("service_obj_%s_%d", peer.clientkey, connkey)] = obj
-        end
-    }
-
-    if self.serv then
-        config.weaktable[string.format("service_%s_%d", peer.clientkey, port)] = self.serv
-        shared.bind_map[port] = self
-        return true, "submitted."
-    else
-        return false, string.format("can't not bind to %d.", port)
-    end
-end
-
-function bind_service_mt:unbind()
-    if self.serv then
-        shared.bind_map[self.port] = nil
-        self.serv:close()
-        self.serv = nil
-
-        return true, "unbinded."
-    else
-        return false, "invaild."
-    end
-end
-
 function unbind(params)
     local port = tonumber(params.port)
 
-    data_map.bind_map[port] = nil
+    if not params.protocol or string.find(params.protocol, "tcp") then
+        data_map.bind_map_tcp[port] = nil
+    elseif string.find(params.protocol, "udp") then
+        data_map.bind_map_udp[port] = nil
+    end
     save_data_map()
 
-    if shared.bind_map[port] then
-        return shared.bind_map[port]:unbind()
+    if shared.bind_map_tcp[port] or shared.bind_map_udp[port] then
+        if shared.bind_map_tcp[port] then
+            shared.bind_map_tcp[port]:unbind(params.protocol)
+        end
+        if shared.bind_map_udp[port] then
+            shared.bind_map_udp[port]:unbind(params.protocol)
+        end
+
+        return true, "unbinded."
     else
         return false, "not bind."
     end
 end
 
 function rebind()
-    for port,params in pairs(data_map.bind_map) do
+    for port,params in pairs(data_map.bind_map_tcp) do
         bind(params)
     end
 end
@@ -973,22 +921,33 @@ function bind(params)
         end
     )
 
-    if shared.bind_map[port] then
-        shared.bind_map[port]:unbind()
+    if shared.bind_map_udp[port] then
+        shared.bind_map_udp[port]:unbind()
     end
 
-    data_map.bind_map[port] = params
+    if not params.protocol or string.find(params.protocol, "tcp") then
+        if shared.bind_map_tcp[port] then
+            shared.bind_map_tcp[port]:unbind(params.protocol)
+        end
+        data_map.bind_map_tcp[port] = params
+    elseif string.find(params.protocol, "udp") then
+        if shared.bind_map_udp[port] then
+            shared.bind_map_udp[port]:unbind(params.protocol)
+        end
+        data_map.bind_map_udp[port] = params
+    end
     save_data_map()
 
     local t
     t = {
         port = port,
         tunnel_apt = list[1],
+        protocol = params.protocol,
         remote_host = params.remote_host,
         remote_port = params.remote_port
     }
 
-    setmetatable(t, bind_service_mt)
+    setmetatable(t, require "bind_service_mt")
 
     return t:bind()
 end

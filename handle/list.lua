@@ -72,7 +72,7 @@ local function onGet(req, resp)
         udp_resend_total = config.udp_resend_total,
         top = fan.gettop(),
         reg_count = reg_count,
-        bind_map_count = count_table_size(shared.bind_map),
+        bind_map_count = count_table_size(shared.bind_map_tcp) .. " + " .. count_table_size(shared.bind_map_udp),
         peer_map_count = count_table_size(shared.weak_apt_peer_map),
         allowed_map_count = count_table_size(shared.allowed_map, 2),
         output_chain_count = count_chain_size(shared.bindserv._main_output_chain),
