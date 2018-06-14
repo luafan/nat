@@ -162,7 +162,7 @@ bind_service_mt.__index = bind_service_mt
 function bind_service_mt:bind()
     local peer = shared.weak_apt_peer_map[self.tunnel_apt]
 
-    if not self.serv_tcp and string.find(self.protocol, "tcp") then
+    if not self.serv_tcp and (not self.protocol or string.find(self.protocol, "tcp")) then
         self.serv_tcp = bind_tcp(self)
 
         if self.serv_tcp then
@@ -173,7 +173,7 @@ function bind_service_mt:bind()
         end
     end
 
-    if not self.serv_udp and string.find(self.protocol, "udp") then
+    if not self.serv_udp and (self.protocol and string.find(self.protocol, "udp")) then
         self.serv_udp = bind_udp(self)
 
         if self.serv_udp then
